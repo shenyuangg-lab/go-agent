@@ -1,0 +1,60 @@
+# Go Agent 配置文件
+# 系统监控和指标采集代理配置
+
+# 代理基本配置
+agent:
+  name: "go-agent"
+  interval: "30s"  # 采集间隔
+  timeout: "10s"   # 采集超时时间
+
+# 采集配置
+collect:
+  # 系统指标采集
+  system:
+    enabled: true
+    cpu: true      # 采集CPU指标
+    memory: true   # 采集内存指标
+    disk: true     # 采集磁盘指标
+    network: true  # 采集网络指标
+  
+  # SNMP采集
+  snmp:
+    enabled: false
+    targets:       # SNMP目标设备列表
+      - "192.168.1.1"
+      - "192.168.1.2"
+    community: "public"  # SNMP团体名
+    version: "2c"        # SNMP版本 (1, 2c, 3)
+    port: 161            # SNMP端口
+  
+  # 脚本执行采集
+  script:
+    enabled: false
+    scripts:       # 要执行的脚本列表
+      - "echo 'Hello World'"
+      - "date"
+      - "uptime"
+    timeout: "30s" # 脚本执行超时时间
+
+# 数据传输配置
+transport:
+  # HTTP上报配置
+  http:
+    enabled: true
+    url: "http://localhost:8080/metrics"  # 上报地址
+    method: "POST"                        # HTTP方法
+    headers:                              # 自定义HTTP头部
+      "Authorization": "Bearer your-token"
+      "Content-Type": "application/json"
+  
+  # gRPC上报配置
+  grpc:
+    enabled: false
+    server: "localhost"  # gRPC服务器地址
+    port: 9090          # gRPC服务器端口
+
+# 日志配置
+log:
+  level: "info"    # 日志级别 (debug, info, warn, error, fatal, panic)
+  format: "json"   # 日志格式 (json, text)
+  output: "stdout" # 日志输出 (stdout, stderr, file)
