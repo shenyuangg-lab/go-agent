@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/soniah/gosnmp"
+	"github.com/gosnmp/gosnmp"
 )
 
 // SNMPCollector SNMP采集器

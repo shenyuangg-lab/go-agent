@@ -41,11 +41,14 @@ func (t *GRPCTransport) Connect(ctx context.Context) error {
 	// 构建服务器地址
 	serverAddr := fmt.Sprintf("%s:%d", t.server, t.port)
 
+	// 创建带超时的上下文
+	dialCtx, cancel := context.WithTimeout(ctx, t.timeout)
+	defer cancel()
+
 	// 创建连接
-	conn, err := grpc.DialContext(ctx, serverAddr,
+	conn, err := grpc.DialContext(dialCtx, serverAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithBlock(),
-		grpc.WithTimeout(t.timeout),
 	)
 	if err != nil {
 		return fmt.Errorf("连接gRPC服务器失败: %v", err)

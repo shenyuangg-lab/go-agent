@@ -3,11 +3,13 @@ package collector
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"time"
 
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/disk"
 	"github.com/shirou/gopsutil/v3/host"
+	"github.com/shirou/gopsutil/v3/load"
 	"github.com/shirou/gopsutil/v3/mem"
 	"github.com/shirou/gopsutil/v3/net"
 )
@@ -151,10 +153,16 @@ func (c *SystemCollector) collectCPUMetrics(metrics *SystemMetrics) error {
 		return err
 	}
 
-	// 系统负载
-	loadAvg, err := cpu.LoadAvg()
-	if err != nil {
-		return err
+	// 系统负载（Windows系统不支持）
+	var loadAvg []float64
+	if runtime.GOOS != "windows" {
+		loadAvgData, err := load.Avg()
+		if err == nil && loadAvgData != nil {
+			loadAvg = []float64{loadAvgData.Load1, loadAvgData.Load5, loadAvgData.Load15}
+		}
+	} else {
+		// Windows 系统使用 CPU 使用率替代
+		loadAvg = []float64{0.0, 0.0, 0.0}
 	}
 
 	metrics.CPU = CPUMetrics{
@@ -185,8 +193,16 @@ func (c *SystemCollector) collectMemoryMetrics(metrics *SystemMetrics) error {
 
 // collectDiskMetrics 采集磁盘指标
 func (c *SystemCollector) collectDiskMetrics(metrics *SystemMetrics) error {
+	// 根据操作系统选择不同的磁盘路径
+	var diskPath string
+	if runtime.GOOS == "windows" {
+		diskPath = "C:\\"
+	} else {
+		diskPath = "/"
+	}
+	
 	// 磁盘使用情况
-	diskUsage, err := disk.Usage("/")
+	diskUsage, err := disk.Usage(diskPath)
 	if err != nil {
 		return err
 	}
@@ -238,4 +254,9 @@ func (c *SystemCollector) collectNetworkMetrics(metrics *SystemMetrics) error {
 	}
 
 	return nil
+}
+
+// IsEnabled 检查是否启用
+func (c *SystemCollector) IsEnabled() bool {
+	return c.enabled
 }

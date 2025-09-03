@@ -1,6 +1,7 @@
 package logger
 
 import (
+	"fmt"
 	"io"
 	"os"
 
@@ -14,27 +15,29 @@ var (
 
 // Init 初始化日志系统
 func Init(verbose bool) error {
+	return InitWithConfig("info", "json", "stdout", verbose)
+}
+
+// InitWithConfig 使用配置初始化日志系统
+func InitWithConfig(level, format, output string, verbose bool) error {
 	log = logrus.New()
 
 	// 设置日志级别
 	if verbose {
 		log.SetLevel(logrus.DebugLevel)
 	} else {
-		log.SetLevel(logrus.InfoLevel)
+		if err := SetLevel(level); err != nil {
+			return fmt.Errorf("设置日志级别失败: %v", err)
+		}
 	}
 
 	// 设置日志格式
-	log.SetFormatter(&logrus.JSONFormatter{
-		TimestampFormat: "2006-01-02 15:04:05",
-		FieldMap: logrus.FieldMap{
-			logrus.FieldKeyTime:  "timestamp",
-			logrus.FieldKeyLevel: "level",
-			logrus.FieldKeyMsg:   "message",
-		},
-	})
+	SetFormat(format)
 
 	// 设置输出
-	log.SetOutput(os.Stdout)
+	if err := SetOutput(output); err != nil {
+		return fmt.Errorf("设置日志输出失败: %v", err)
+	}
 
 	return nil
 }

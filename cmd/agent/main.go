@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"go-agent/pkg/config"
 	"go-agent/pkg/logger"
@@ -35,7 +37,7 @@ func main() {
 }
 
 func run(cmd *cobra.Command, args []string) error {
-	// 初始化日志
+	// 初始化基本日志
 	if err := logger.Init(verbose); err != nil {
 		return fmt.Errorf("初始化日志失败: %v", err)
 	}
@@ -46,14 +48,33 @@ func run(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("加载配置失败: %v", err)
 	}
 
+	// 使用配置重新初始化日志
+	if err := logger.InitWithConfig(cfg.Log.Level, cfg.Log.Format, cfg.Log.Output, verbose); err != nil {
+		logger.Warnf("重新初始化日志失败: %v", err)
+	}
+
 	// 初始化调度器
 	sched := scheduler.New()
 	if err := sched.Start(cfg); err != nil {
 		return fmt.Errorf("启动调度器失败: %v", err)
 	}
 
-	// 等待信号
+	// 设置信号处理
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// 等待信号或调度器停止
+	go func() {
+		<-sigChan
+		logger.Info("接收到停止信号，正在优雅关闭...")
+		if err := sched.Stop(); err != nil {
+			logger.Errorf("停止调度器失败: %v", err)
+		}
+	}()
+
+	// 等待调度器完成
 	sched.Wait()
+	logger.Info("应用程序已停止")
 
 	return nil
 }

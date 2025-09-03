@@ -100,6 +100,11 @@ func Load(configFile string) (*Config, error) {
 		return nil, fmt.Errorf("解析配置文件失败: %v", err)
 	}
 
+	// 验证配置
+	if err := validateConfig(&config); err != nil {
+		return nil, fmt.Errorf("配置验证失败: %v", err)
+	}
+
 	return &config, nil
 }
 
@@ -131,4 +136,60 @@ func setDefaults() {
 	viper.SetDefault("log.level", "info")
 	viper.SetDefault("log.format", "json")
 	viper.SetDefault("log.output", "stdout")
+}
+
+// validateConfig 验证配置
+func validateConfig(cfg *Config) error {
+	// 验证代理配置
+	if cfg.Agent.Name == "" {
+		return fmt.Errorf("代理名称不能为空")
+	}
+	if cfg.Agent.Interval <= 0 {
+		return fmt.Errorf("采集间隔必须大于0")
+	}
+	if cfg.Agent.Timeout <= 0 {
+		return fmt.Errorf("超时时间必须大于0")
+	}
+
+	// 验证HTTP传输配置
+	if cfg.Transport.HTTP.Enabled {
+		if cfg.Transport.HTTP.URL == "" {
+			return fmt.Errorf("HTTP传输器启用时URL不能为空")
+		}
+		if cfg.Transport.HTTP.Method == "" {
+			cfg.Transport.HTTP.Method = "POST"
+		}
+	}
+
+	// 验证gRPC传输配置
+	if cfg.Transport.GRPC.Enabled {
+		if cfg.Transport.GRPC.Server == "" {
+			return fmt.Errorf("gRPC传输器启用时服务器地址不能为空")
+		}
+		if cfg.Transport.GRPC.Port <= 0 || cfg.Transport.GRPC.Port > 65535 {
+			return fmt.Errorf("gRPC端口必须在1-65535范围内")
+		}
+	}
+
+	// 验证SNMP配置
+	if cfg.Collect.SNMP.Enabled {
+		if len(cfg.Collect.SNMP.Targets) == 0 {
+			return fmt.Errorf("SNMP采集器启用时目标列表不能为空")
+		}
+		if cfg.Collect.SNMP.Port <= 0 || cfg.Collect.SNMP.Port > 65535 {
+			return fmt.Errorf("SNMP端口必须在1-65535范围内")
+		}
+	}
+
+	// 验证脚本配置
+	if cfg.Collect.Script.Enabled {
+		if len(cfg.Collect.Script.Scripts) == 0 {
+			return fmt.Errorf("脚本采集器启用时脚本列表不能为空")
+		}
+		if cfg.Collect.Script.Timeout <= 0 {
+			return fmt.Errorf("脚本超时时间必须大于0")
+		}
+	}
+
+	return nil
 }
