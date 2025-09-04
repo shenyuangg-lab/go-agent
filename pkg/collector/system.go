@@ -200,7 +200,7 @@ func (c *SystemCollector) collectDiskMetrics(metrics *SystemMetrics) error {
 	} else {
 		diskPath = "/"
 	}
-	
+
 	// 磁盘使用情况
 	diskUsage, err := disk.Usage(diskPath)
 	if err != nil {

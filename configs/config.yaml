@@ -53,6 +53,17 @@ transport:
     server: "localhost"  # gRPC服务器地址
     port: 9090          # gRPC服务器端口
 
+# 设备监控API配置
+device_monitor:
+  enabled: false                                    # 是否启用设备监控API
+  base_url: "http://localhost:8080"                 # API服务器地址
+  timeout: "30s"                                   # 请求超时时间
+  agent_id: ""                                     # Agent ID（注册后自动获取）
+  heartbeat_interval: "30s"                        # 心跳间隔
+  config_refresh_interval: "5m"                    # 配置刷新间隔
+  metrics_buffer_size: 100                         # 指标缓冲区大小
+  metrics_flush_interval: "10s"                    # 指标刷新间隔
+
 # 日志配置
 log:
   level: "info"    # 日志级别 (debug, info, warn, error, fatal, panic)

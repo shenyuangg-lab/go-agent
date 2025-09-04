@@ -4,7 +4,18 @@
       "Bash(go fmt:*)",
       "Bash(go vet ./...)",
       "Bash(go mod:*)",
-      "Bash(go get:*)"
+      "Bash(go get:*)",
+      "Read(/E:\\work\\go-agent/**)",
+      "Read(/E:\\work\\go-agent\\image/**)",
+      "Read(/E:\\work\\go-agent\\image/**)",
+      "Read(/E:\\work\\go-agent\\image/**)",
+      "Read(/E:\\work\\go-agent\\image/**)",
+      "Read(/E:\\work\\go-agent\\image/**)",
+      "Read(/E:\\work\\go-agent\\pkg\\transport/**)",
+      "Read(/E:\\work\\go-agent\\configs/**)",
+      "Read(/E:\\work\\go-agent\\pkg/**)",
+      "Read(/E:\\work\\go-agent\\pkg\\config/**)",
+      "Read(/E:\\work\\go-agent\\pkg\\config/**)"
     ],
     "deny": [],
     "ask": []

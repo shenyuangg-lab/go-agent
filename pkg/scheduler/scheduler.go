@@ -6,9 +6,11 @@ import (
 	"sync"
 	"time"
 
+	"go-agent/pkg/client"
 	"go-agent/pkg/collector"
 	"go-agent/pkg/config"
 	"go-agent/pkg/logger"
+	"go-agent/pkg/services"
 	"go-agent/pkg/transport"
 
 	"github.com/robfig/cron/v3"
@@ -23,11 +25,17 @@ type Scheduler struct {
 	scriptCollector *collector.ScriptCollector
 	httpTransport   *transport.HTTPTransport
 	grpcTransport   *transport.GRPCTransport
-	ctx             context.Context
-	cancel          context.CancelFunc
-	wg              sync.WaitGroup
-	mu              sync.RWMutex
-	running         bool
+	// 新增API相关服务
+	apiClient        *client.DeviceMonitorClient
+	registerService  *services.RegisterService
+	heartbeatService *services.HeartbeatService
+	configManager    *services.ConfigManager
+	metricsSender    *services.MetricsSender
+	ctx              context.Context
+	cancel           context.CancelFunc
+	wg               sync.WaitGroup
+	mu               sync.RWMutex
+	running          bool
 }
 
 // New 创建新的调度器
@@ -62,6 +70,16 @@ func (s *Scheduler) Start(cfg *config.Config) error {
 		return fmt.Errorf("初始化传输器失败: %v", err)
 	}
 
+	// 初始化API服务
+	if err := s.initAPIServices(); err != nil {
+		return fmt.Errorf("初始化API服务失败: %v", err)
+	}
+
+	// 启动API服务
+	if err := s.startAPIServices(); err != nil {
+		return fmt.Errorf("启动API服务失败: %v", err)
+	}
+
 	// 添加定时任务
 	if err := s.addScheduledJobs(); err != nil {
 		return fmt.Errorf("添加定时任务失败: %v", err)
@@ -87,6 +105,9 @@ func (s *Scheduler) Stop() error {
 
 	// 停止cron调度器
 	s.cron.Stop()
+
+	// 停止API服务
+	s.stopAPIServices()
 
 	// 取消上下文
 	s.cancel()
@@ -367,4 +388,126 @@ func (s *Scheduler) getNextRunTime(entries []cron.Entry) *time.Time {
 		}
 	}
 	return nextRun
+}
+
+// initAPIServices 初始化API服务
+func (s *Scheduler) initAPIServices() error {
+	// 检查是否配置了API服务
+	if s.config.DeviceMonitor == nil || !s.config.DeviceMonitor.Enabled {
+		logger.Info("设备监控API服务未启用，跳过初始化")
+		return nil
+	}
+
+	// 创建API客户端
+	clientConfig := &client.Config{
+		BaseURL: s.config.DeviceMonitor.BaseURL,
+		Timeout: s.config.DeviceMonitor.Timeout,
+		AgentID: s.config.DeviceMonitor.AgentID,
+	}
+	s.apiClient = client.NewDeviceMonitorClient(clientConfig)
+
+	// 创建注册服务
+	registerService, err := services.NewRegisterService(s.apiClient, logger.GetLogger())
+	if err != nil {
+		return fmt.Errorf("创建注册服务失败: %v", err)
+	}
+	s.registerService = registerService
+
+	// 创建心跳服务
+	heartbeatConfig := &services.HeartbeatConfig{
+		Interval: s.config.DeviceMonitor.HeartbeatInterval,
+		Enabled:  s.config.DeviceMonitor.Enabled,
+	}
+	s.heartbeatService = services.NewHeartbeatService(s.apiClient, logger.GetLogger(), heartbeatConfig)
+
+	// 创建配置管理器
+	configManagerConfig := &services.ConfigManagerConfig{
+		RefreshInterval: s.config.DeviceMonitor.ConfigRefreshInterval,
+		Enabled:         s.config.DeviceMonitor.Enabled,
+	}
+	s.configManager = services.NewConfigManager(s.apiClient, logger.GetLogger(), configManagerConfig)
+
+	// 创建指标发送器
+	metricsSenderConfig := &services.MetricsSenderConfig{
+		BufferSize:    s.config.DeviceMonitor.MetricsBufferSize,
+		FlushInterval: s.config.DeviceMonitor.MetricsFlushInterval,
+		Enabled:       s.config.DeviceMonitor.Enabled,
+	}
+	s.metricsSender = services.NewMetricsSender(s.apiClient, logger.GetLogger(), metricsSenderConfig)
+
+	logger.Info("API服务初始化完成")
+	return nil
+}
+
+// startAPIServices 启动API服务
+func (s *Scheduler) startAPIServices() error {
+	if s.config.DeviceMonitor == nil || !s.config.DeviceMonitor.Enabled {
+		return nil
+	}
+
+	// 注册agent
+	if s.registerService != nil {
+		if err := s.registerService.RegisterWithRetry(s.ctx, 3, 5*time.Second); err != nil {
+			logger.Errorf("Agent注册失败: %v", err)
+			return err
+		}
+		logger.Info("Agent注册成功")
+	}
+
+	// 启动心跳服务
+	if s.heartbeatService != nil {
+		if err := s.heartbeatService.Start(s.ctx); err != nil {
+			logger.Errorf("启动心跳服务失败: %v", err)
+			return err
+		}
+	}
+
+	// 启动配置管理器
+	if s.configManager != nil {
+		if err := s.configManager.Start(s.ctx); err != nil {
+			logger.Errorf("启动配置管理器失败: %v", err)
+			return err
+		}
+	}
+
+	// 启动指标发送器
+	if s.metricsSender != nil {
+		if err := s.metricsSender.Start(s.ctx); err != nil {
+			logger.Errorf("启动指标发送器失败: %v", err)
+			return err
+		}
+	}
+
+	logger.Info("API服务启动完成")
+	return nil
+}
+
+// stopAPIServices 停止API服务
+func (s *Scheduler) stopAPIServices() {
+	if s.config.DeviceMonitor == nil || !s.config.DeviceMonitor.Enabled {
+		return
+	}
+
+	// 停止指标发送器
+	if s.metricsSender != nil {
+		if err := s.metricsSender.Stop(); err != nil {
+			logger.Errorf("停止指标发送器失败: %v", err)
+		}
+	}
+
+	// 停止配置管理器
+	if s.configManager != nil {
+		if err := s.configManager.Stop(); err != nil {
+			logger.Errorf("停止配置管理器失败: %v", err)
+		}
+	}
+
+	// 停止心跳服务
+	if s.heartbeatService != nil {
+		if err := s.heartbeatService.Stop(); err != nil {
+			logger.Errorf("停止心跳服务失败: %v", err)
+		}
+	}
+
+	logger.Info("API服务已停止")
 }

@@ -9,10 +9,11 @@ import (
 
 // Config 应用配置结构
 type Config struct {
-	Agent     AgentConfig     `mapstructure:"agent"`
-	Collect   CollectConfig   `mapstructure:"collect"`
-	Transport TransportConfig `mapstructure:"transport"`
-	Log       LogConfig       `mapstructure:"log"`
+	Agent         AgentConfig          `mapstructure:"agent"`
+	Collect       CollectConfig        `mapstructure:"collect"`
+	Transport     TransportConfig      `mapstructure:"transport"`
+	DeviceMonitor *DeviceMonitorConfig `mapstructure:"device_monitor"`
+	Log           LogConfig            `mapstructure:"log"`
 }
 
 // AgentConfig 代理配置
@@ -82,6 +83,18 @@ type LogConfig struct {
 	Output string `mapstructure:"output"`
 }
 
+// DeviceMonitorConfig 设备监控API配置
+type DeviceMonitorConfig struct {
+	Enabled               bool          `mapstructure:"enabled"`
+	BaseURL               string        `mapstructure:"base_url"`
+	Timeout               time.Duration `mapstructure:"timeout"`
+	AgentID               string        `mapstructure:"agent_id"`
+	HeartbeatInterval     time.Duration `mapstructure:"heartbeat_interval"`
+	ConfigRefreshInterval time.Duration `mapstructure:"config_refresh_interval"`
+	MetricsBufferSize     int           `mapstructure:"metrics_buffer_size"`
+	MetricsFlushInterval  time.Duration `mapstructure:"metrics_flush_interval"`
+}
+
 // Load 加载配置文件
 func Load(configFile string) (*Config, error) {
 	viper.SetConfigFile(configFile)
@@ -132,6 +145,13 @@ func setDefaults() {
 	viper.SetDefault("transport.http.method", "POST")
 	viper.SetDefault("transport.grpc.enabled", false)
 	viper.SetDefault("transport.grpc.port", 9090)
+
+	viper.SetDefault("device_monitor.enabled", false)
+	viper.SetDefault("device_monitor.timeout", "30s")
+	viper.SetDefault("device_monitor.heartbeat_interval", "30s")
+	viper.SetDefault("device_monitor.config_refresh_interval", "5m")
+	viper.SetDefault("device_monitor.metrics_buffer_size", 100)
+	viper.SetDefault("device_monitor.metrics_flush_interval", "10s")
 
 	viper.SetDefault("log.level", "info")
 	viper.SetDefault("log.format", "json")
@@ -188,6 +208,28 @@ func validateConfig(cfg *Config) error {
 		}
 		if cfg.Collect.Script.Timeout <= 0 {
 			return fmt.Errorf("脚本超时时间必须大于0")
+		}
+	}
+
+	// 验证设备监控配置
+	if cfg.DeviceMonitor != nil && cfg.DeviceMonitor.Enabled {
+		if cfg.DeviceMonitor.BaseURL == "" {
+			return fmt.Errorf("设备监控服务启用时BaseURL不能为空")
+		}
+		if cfg.DeviceMonitor.Timeout <= 0 {
+			cfg.DeviceMonitor.Timeout = 30 * time.Second
+		}
+		if cfg.DeviceMonitor.HeartbeatInterval <= 0 {
+			cfg.DeviceMonitor.HeartbeatInterval = 30 * time.Second
+		}
+		if cfg.DeviceMonitor.ConfigRefreshInterval <= 0 {
+			cfg.DeviceMonitor.ConfigRefreshInterval = 5 * time.Minute
+		}
+		if cfg.DeviceMonitor.MetricsBufferSize <= 0 {
+			cfg.DeviceMonitor.MetricsBufferSize = 100
+		}
+		if cfg.DeviceMonitor.MetricsFlushInterval <= 0 {
+			cfg.DeviceMonitor.MetricsFlushInterval = 10 * time.Second
 		}
 	}
 
