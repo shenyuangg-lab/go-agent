@@ -41,23 +41,44 @@
 
 **日志**: `pkg/logger/logger.go` - 使用 logrus 的结构化日志，支持 JSON/文本输出
 
+**服务**: `pkg/services/` - 业务服务层
+- `heartbeat.go` - 心跳服务，定期向监控平台发送状态
+- `config_manager.go` - 配置管理服务，支持动态配置更新
+- `metrics_sender.go` - 指标发送服务，负责批量发送采集的指标
+- `register.go` - 注册服务，向监控平台注册代理
+
+**客户端**: `pkg/client/device_monitor.go` - 设备监控平台客户端，提供注册、心跳、配置获取、指标上报等API接口
+
 ### 配置结构
 
 代理使用分层 YAML 配置，主要包含以下部分：
 - `agent`: 核心代理设置（名称、间隔、超时）
 - `collect`: 采集模块（系统、snmp、脚本）
 - `transport`: 数据传输（http、grpc）
+- `device_monitor`: 设备监控API配置（基础URL、超时、心跳间隔等）
 - `log`: 日志配置（级别、格式、输出）
 
 ### 数据流
 
-1. 调度器根据配置的间隔启动 cron 作业
-2. 采集器从各自的来源收集指标
-3. 传输模块将收集的数据发送到配置的端点
-4. 所有活动通过集中化日志记录器记录
+1. 启动时，代理向设备监控平台注册（如果启用）
+2. 调度器根据配置的间隔启动 cron 作业
+3. 采集器从各自的来源收集指标
+4. 传输模块将收集的数据发送到配置的端点
+5. 心跳服务定期向监控平台报告代理状态
+6. 配置管理服务定期从平台获取最新配置
+7. 所有活动通过集中化日志记录器记录
 
 ### 添加新组件
 
 **新采集器**: 在 `pkg/collector/` 中实现 `Collect(ctx context.Context)` 方法，然后在调度器中注册
 
 **新传输器**: 在 `pkg/transport/` 中实现 `Send(ctx context.Context, data interface{}, dataType string, metadata map[string]interface{})` 方法，然后在调度器中注册
+
+**新服务**: 在 `pkg/services/` 中创建新的业务服务，实现相应的启动和停止方法，然后在调度器中集成
+
+### 测试
+
+目前项目没有测试文件。建议为核心组件添加单元测试：
+- 运行测试: `go test ./...`
+- 运行覆盖率测试: `go test -cover ./...`
+- 运行基准测试: `go test -bench=. ./...`

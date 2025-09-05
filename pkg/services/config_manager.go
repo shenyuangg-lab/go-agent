@@ -13,23 +13,26 @@ import (
 
 // CollectItem 采集项
 type CollectItem struct {
-	ItemID   string `json:"itemId"`
-	Name     string `json:"name"`
-	Type     string `json:"type"`
-	Interval int    `json:"interval"` // 采集间隔(秒)
+	ItemID                int64  `json:"itemId"`
+	ItemName              string `json:"itemName"`
+	ItemKey               string `json:"itemKey"`
+	InfoType              int    `json:"infoType"`
+	UpdateIntervalSeconds int    `json:"updateIntervalSeconds"` // 推送间隔(秒)
+	Timeout               int    `json:"timeout"`
 }
 
 // ConfigManager 配置管理器
 type ConfigManager struct {
-	client      *client.DeviceMonitorClient
-	logger      *logrus.Logger
-	items       []CollectItem
-	mutex       sync.RWMutex
-	lastUpdate  time.Time
-	refreshChan chan struct{}
-	stopChan    chan struct{}
-	wg          sync.WaitGroup
-	running     bool
+	client         *client.DeviceMonitorClient
+	logger         *logrus.Logger
+	items          []CollectItem
+	mutex          sync.RWMutex
+	lastUpdate     time.Time
+	refreshChan    chan struct{}
+	stopChan       chan struct{}
+	wg             sync.WaitGroup
+	running        bool
+	onConfigUpdate func([]CollectItem) // 配置更新回调
 }
 
 // ConfigManagerConfig 配置管理器配置
@@ -53,6 +56,13 @@ func NewConfigManager(client *client.DeviceMonitorClient, logger *logrus.Logger,
 		stopChan:    make(chan struct{}),
 		running:     false,
 	}
+}
+
+// SetConfigUpdateCallback 设置配置更新回调
+func (cm *ConfigManager) SetConfigUpdateCallback(callback func([]CollectItem)) {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
+	cm.onConfigUpdate = callback
 }
 
 // Start 启动配置管理器
@@ -111,7 +121,7 @@ func (cm *ConfigManager) GetItems() []CollectItem {
 }
 
 // GetItemByID 根据ID获取采集项
-func (cm *ConfigManager) GetItemByID(itemID string) (*CollectItem, error) {
+func (cm *ConfigManager) GetItemByID(itemID int64) (*CollectItem, error) {
 	cm.mutex.RLock()
 	defer cm.mutex.RUnlock()
 
@@ -121,7 +131,7 @@ func (cm *ConfigManager) GetItemByID(itemID string) (*CollectItem, error) {
 		}
 	}
 
-	return nil, fmt.Errorf("未找到采集项: %s", itemID)
+	return nil, fmt.Errorf("未找到采集项: %d", itemID)
 }
 
 // GetItemsByType 根据类型获取采集项
@@ -131,7 +141,7 @@ func (cm *ConfigManager) GetItemsByType(itemType string) []CollectItem {
 
 	var items []CollectItem
 	for _, item := range cm.items {
-		if item.Type == itemType {
+		if item.ItemKey == itemType {
 			items = append(items, item)
 		}
 	}
@@ -165,7 +175,7 @@ func (cm *ConfigManager) loadConfig(ctx context.Context) error {
 		return fmt.Errorf("获取配置失败: %v", err)
 	}
 
-	if resp.Code != 1 {
+	if resp.Code != 200 {
 		return fmt.Errorf("获取配置响应异常: %s", resp.Msg)
 	}
 
@@ -173,10 +183,12 @@ func (cm *ConfigManager) loadConfig(ctx context.Context) error {
 	items := make([]CollectItem, len(resp.Data))
 	for i, item := range resp.Data {
 		items[i] = CollectItem{
-			ItemID:   item.ItemID,
-			Name:     item.Name,
-			Type:     item.Type,
-			Interval: item.Interval,
+			ItemID:                item.ItemID,
+			ItemName:              item.ItemName,
+			ItemKey:               item.ItemKey,
+			InfoType:              item.InfoType,
+			UpdateIntervalSeconds: item.UpdateIntervalSeconds,
+			Timeout:               item.Timeout,
 		}
 	}
 
@@ -184,6 +196,12 @@ func (cm *ConfigManager) loadConfig(ctx context.Context) error {
 	cm.mutex.Lock()
 	cm.items = items
 	cm.lastUpdate = time.Now()
+
+	// 调用配置更新回调
+	if cm.onConfigUpdate != nil {
+		go cm.onConfigUpdate(items)
+	}
+
 	cm.mutex.Unlock()
 
 	cm.logger.Info("配置加载成功", map[string]interface{}{
@@ -194,10 +212,10 @@ func (cm *ConfigManager) loadConfig(ctx context.Context) error {
 	// 记录配置详情
 	for _, item := range items {
 		cm.logger.Debug("加载采集项", map[string]interface{}{
-			"item_id":  item.ItemID,
-			"name":     item.Name,
-			"type":     item.Type,
-			"interval": item.Interval,
+			"item_id":                 item.ItemID,
+			"item_name":               item.ItemName,
+			"item_key":                item.ItemKey,
+			"update_interval_seconds": item.UpdateIntervalSeconds,
 		})
 	}
 

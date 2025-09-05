@@ -5,9 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
+	"os"
 	"runtime"
 	"time"
+
+	"github.com/shirou/gopsutil/v3/host"
 )
 
 // DeviceMonitorClient 设备监控API客户端
@@ -15,6 +19,7 @@ type DeviceMonitorClient struct {
 	baseURL    string
 	httpClient *http.Client
 	agentID    string
+	token      string // JWT认证token
 }
 
 // Config 客户端配置
@@ -39,6 +44,7 @@ type RegisterResponse struct {
 	Msg  string `json:"msg"`
 	Data struct {
 		AgentID string `json:"agentId"`
+		Token   string `json:"token"`
 	} `json:"data"`
 }
 
@@ -56,7 +62,7 @@ type HeartbeatResponse struct {
 
 // MetricsRequest 指标数据请求
 type MetricsRequest struct {
-	ItemID    string      `json:"itemId"`
+	ItemID    int64       `json:"itemId"`
 	Timestamp int64       `json:"timestamp"`
 	Value     interface{} `json:"value"`
 }
@@ -72,10 +78,14 @@ type ConfigResponse struct {
 	Code int    `json:"code"`
 	Msg  string `json:"msg"`
 	Data []struct {
-		ItemID   string `json:"itemId"`
-		Name     string `json:"name"`
-		Type     string `json:"type"`
-		Interval int    `json:"interval"`
+		ItemID                int64   `json:"itemId"`
+		ItemName              string  `json:"itemName"`
+		ItemKey               string  `json:"itemkey"`
+		InfoType              int     `json:"infoType"`
+		UpdateIntervalSeconds int     `json:"updateIntervalseconds"`
+		Timeout               int     `json:"timeout"`
+		Description           *string `json:"description"`
+		Intervals             *string `json:"intervals"`
 	} `json:"data"`
 }
 
@@ -92,25 +102,44 @@ func NewDeviceMonitorClient(config *Config) *DeviceMonitorClient {
 	}
 }
 
-// Register agent注册
-func (c *DeviceMonitorClient) Register(ctx context.Context, hostname, ipAddress string) (*RegisterResponse, error) {
+// Register agent注册 - 自动获取主机信息
+func (c *DeviceMonitorClient) Register(ctx context.Context) (*RegisterResponse, error) {
+	// 自动获取主机名
+	hostname, err := os.Hostname()
+	if err != nil {
+		return nil, fmt.Errorf("获取主机名失败: %v", err)
+	}
+
+	// 自动获取IP地址
+	ipAddress, err := getLocalIP()
+	if err != nil {
+		return nil, fmt.Errorf("获取IP地址失败: %v", err)
+	}
+
+	// 获取操作系统版本
+	osVersion, err := getOSVersion()
+	if err != nil {
+		osVersion = runtime.GOOS // 如果获取失败，使用GOOS作为后备
+	}
+
 	req := &RegisterRequest{
 		Hostname:     hostname,
 		IPAddress:    ipAddress,
 		OSType:       runtime.GOOS,
-		OSVersion:    getOSVersion(),
+		OSVersion:    osVersion,
 		AgentVersion: "1.0.0",
 	}
 
 	var resp RegisterResponse
-	err := c.doRequest(ctx, "POST", "/deviceMonitor/agent/register", req, &resp)
+	err = c.doRequest(ctx, "POST", "/deviceMonitor/agent/register", req, &resp)
 	if err != nil {
 		return nil, fmt.Errorf("注册失败: %v", err)
 	}
 
-	// 保存返回的agentID
-	if resp.Code == 1 && resp.Data.AgentID != "" {
+	// 保存返回的agentID和token
+	if resp.Code == 200 && resp.Data.AgentID != "" {
 		c.agentID = resp.Data.AgentID
+		c.token = resp.Data.Token
 	}
 
 	return &resp, nil
@@ -137,7 +166,7 @@ func (c *DeviceMonitorClient) Heartbeat(ctx context.Context, status string) (*He
 }
 
 // SendMetrics 发送指标数据
-func (c *DeviceMonitorClient) SendMetrics(ctx context.Context, itemID string, value interface{}) (*MetricsResponse, error) {
+func (c *DeviceMonitorClient) SendMetrics(ctx context.Context, itemID int64, value interface{}) (*MetricsResponse, error) {
 	req := &MetricsRequest{
 		ItemID:    itemID,
 		Timestamp: time.Now().Unix(),
@@ -179,6 +208,21 @@ func (c *DeviceMonitorClient) GetAgentID() string {
 	return c.agentID
 }
 
+// GetToken 获取token
+func (c *DeviceMonitorClient) GetToken() string {
+	return c.token
+}
+
+// SetToken 设置token
+func (c *DeviceMonitorClient) SetToken(token string) {
+	c.token = token
+}
+
+// IsAuthenticated 检查是否已认证（有token和agentID）
+func (c *DeviceMonitorClient) IsAuthenticated() bool {
+	return c.agentID != "" && c.token != ""
+}
+
 // doRequest 执行HTTP请求
 func (c *DeviceMonitorClient) doRequest(ctx context.Context, method, path string, reqBody, respBody interface{}) error {
 	url := c.baseURL + path
@@ -204,6 +248,11 @@ func (c *DeviceMonitorClient) doRequest(ctx context.Context, method, path string
 	}
 	req.Header.Set("User-Agent", "go-agent/1.0")
 
+	// 如果有token，自动添加Authorization头
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("请求失败: %v", err)
@@ -223,9 +272,39 @@ func (c *DeviceMonitorClient) doRequest(ctx context.Context, method, path string
 	return nil
 }
 
+// getLocalIP 获取本机IP地址
+func getLocalIP() (string, error) {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		// 如果无法连接外网，尝试获取本地网络接口IP
+		addrs, err := net.InterfaceAddrs()
+		if err != nil {
+			return "", err
+		}
+
+		for _, addr := range addrs {
+			if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
+				if ipnet.IP.To4() != nil {
+					return ipnet.IP.String(), nil
+				}
+			}
+		}
+		return "", fmt.Errorf("未找到有效的IP地址")
+	}
+	defer conn.Close()
+
+	localAddr := conn.LocalAddr().(*net.UDPAddr)
+	return localAddr.IP.String(), nil
+}
+
 // getOSVersion 获取操作系统版本
-func getOSVersion() string {
-	// 这里可以根据不同操作系统获取具体版本信息
-	// 简化实现，直接返回GOOS
-	return runtime.GOOS
+func getOSVersion() (string, error) {
+	// 使用gopsutil获取详细的操作系统版本信息
+	info, err := host.Info()
+	if err != nil {
+		return "", fmt.Errorf("获取系统信息失败: %v", err)
+	}
+
+	// 返回平台版本信息，格式如: "windows-10.0.19041"
+	return fmt.Sprintf("%s-%s", info.Platform, info.PlatformVersion), nil
 }

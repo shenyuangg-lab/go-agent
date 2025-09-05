@@ -41,7 +41,7 @@ transport:
   # HTTP上报配置
   http:
     enabled: true
-    url: "http://localhost:8080/metrics"  # 上报地址
+    url: "http://all.roywise.cn:8081/api"  # 上报地址
     method: "POST"                        # HTTP方法
     headers:                              # 自定义HTTP头部
       "Authorization": "Bearer your-token"
@@ -55,8 +55,8 @@ transport:
 
 # 设备监控API配置
 device_monitor:
-  enabled: false                                    # 是否启用设备监控API
-  base_url: "http://localhost:8080"                 # API服务器地址
+  enabled: true                                     # 是否启用设备监控API
+  base_url: "http://all.roywise.cn:8081/api"                 # API服务器地址
   timeout: "30s"                                   # 请求超时时间
   agent_id: ""                                     # Agent ID（注册后自动获取）
   heartbeat_interval: "30s"                        # 心跳间隔
@@ -66,6 +66,6 @@ device_monitor:
 
 # 日志配置
 log:
-  level: "info"    # 日志级别 (debug, info, warn, error, fatal, panic)
-  format: "json"   # 日志格式 (json, text)
+  level: "debug"   # 日志级别 (debug, info, warn, error, fatal, panic)
+  format: "text"   # 日志格式 (json, text)
   output: "stdout" # 日志输出 (stdout, stderr, file)

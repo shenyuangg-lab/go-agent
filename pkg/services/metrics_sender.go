@@ -13,13 +13,14 @@ import (
 
 // MetricData 指标数据
 type MetricData struct {
-	ItemID    string                 `json:"itemId"`
+	ItemID    int64                  `json:"itemId"`
 	Timestamp time.Time              `json:"timestamp"`
 	Value     interface{}            `json:"value"`
 	Metadata  map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // MetricsSender 指标发送器
+
 type MetricsSender struct {
 	client        *client.DeviceMonitorClient
 	logger        *logrus.Logger
@@ -112,7 +113,7 @@ func (ms *MetricsSender) Stop() error {
 }
 
 // SendMetric 发送单个指标
-func (ms *MetricsSender) SendMetric(itemID string, value interface{}, metadata map[string]interface{}) error {
+func (ms *MetricsSender) SendMetric(itemID int64, value interface{}, metadata map[string]interface{}) error {
 	metric := MetricData{
 		ItemID:    itemID,
 		Timestamp: time.Now(),
@@ -150,12 +151,15 @@ func (ms *MetricsSender) AddMetric(metric MetricData) error {
 }
 
 // SendMetricImmediate 立即发送指标（不通过缓冲区）
-func (ms *MetricsSender) SendMetricImmediate(ctx context.Context, itemID string, value interface{}) error {
-	resp, err := ms.client.SendMetrics(ctx, itemID, value)
+func (ms *MetricsSender) SendMetricImmediate(ctx context.Context, itemID int64, value interface{}) error {
+	// 处理数组类型的值，只取第一个元素
+	processedValue := ms.processValue(value)
+
+	resp, err := ms.client.SendMetrics(ctx, itemID, processedValue)
 	if err != nil {
 		ms.logger.Error("立即发送指标失败", map[string]interface{}{
 			"item_id": itemID,
-			"value":   value,
+			"value":   processedValue,
 			"error":   err.Error(),
 		})
 		return err
@@ -173,7 +177,7 @@ func (ms *MetricsSender) SendMetricImmediate(ctx context.Context, itemID string,
 
 	ms.logger.Debug("立即发送指标成功", map[string]interface{}{
 		"item_id": itemID,
-		"value":   value,
+		"value":   processedValue,
 	})
 
 	return nil
@@ -276,4 +280,54 @@ func (ms *MetricsSender) IsRunning() bool {
 	ms.mutex.RLock()
 	defer ms.mutex.RUnlock()
 	return ms.running
+}
+
+// processValue 处理指标值，根据接口要求处理数组类型
+func (ms *MetricsSender) processValue(value interface{}) interface{} {
+	if value == nil {
+		return value
+	}
+
+	// 检查是否为数组类型
+	switch v := value.(type) {
+	case []interface{}:
+		// 如果是数组，只取第一个元素
+		if len(v) > 0 {
+			ms.logger.Debug("处理数组类型值，只取第一个元素", map[string]interface{}{
+				"original_value":  v,
+				"processed_value": v[0],
+			})
+			return v[0]
+		}
+		return nil
+	case []string:
+		if len(v) > 0 {
+			ms.logger.Debug("处理字符串数组类型值，只取第一个元素", map[string]interface{}{
+				"original_value":  v,
+				"processed_value": v[0],
+			})
+			return v[0]
+		}
+		return nil
+	case []int:
+		if len(v) > 0 {
+			ms.logger.Debug("处理整数数组类型值，只取第一个元素", map[string]interface{}{
+				"original_value":  v,
+				"processed_value": v[0],
+			})
+			return v[0]
+		}
+		return nil
+	case []float64:
+		if len(v) > 0 {
+			ms.logger.Debug("处理浮点数组类型值，只取第一个元素", map[string]interface{}{
+				"original_value":  v,
+				"processed_value": v[0],
+			})
+			return v[0]
+		}
+		return nil
+	default:
+		return value
+	}
 }

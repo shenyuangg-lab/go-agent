@@ -16,6 +16,19 @@ import (
 	"github.com/robfig/cron/v3"
 )
 
+// ItemScheduler 监控项调度器
+type ItemScheduler struct {
+	ItemID                int64
+	ItemName              string
+	ItemKey               string
+	InfoType              int
+	UpdateIntervalSeconds int
+	Timeout               int
+	ticker                *time.Ticker
+	stopChan              chan struct{}
+	running               bool
+}
+
 // Scheduler 任务调度器
 type Scheduler struct {
 	cron            *cron.Cron
@@ -31,11 +44,13 @@ type Scheduler struct {
 	heartbeatService *services.HeartbeatService
 	configManager    *services.ConfigManager
 	metricsSender    *services.MetricsSender
-	ctx              context.Context
-	cancel           context.CancelFunc
-	wg               sync.WaitGroup
-	mu               sync.RWMutex
-	running          bool
+	// 监控项调度器
+	itemSchedulers map[int64]*ItemScheduler
+	ctx            context.Context
+	cancel         context.CancelFunc
+	wg             sync.WaitGroup
+	mu             sync.RWMutex
+	running        bool
 }
 
 // New 创建新的调度器
@@ -43,9 +58,10 @@ func New() *Scheduler {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &Scheduler{
-		cron:   cron.New(cron.WithSeconds()),
-		ctx:    ctx,
-		cancel: cancel,
+		cron:           cron.New(cron.WithSeconds()),
+		ctx:            ctx,
+		cancel:         cancel,
+		itemSchedulers: make(map[int64]*ItemScheduler),
 	}
 }
 
@@ -80,6 +96,11 @@ func (s *Scheduler) Start(cfg *config.Config) error {
 		return fmt.Errorf("启动API服务失败: %v", err)
 	}
 
+	// 启动监控项调度器
+	if err := s.startItemSchedulers(); err != nil {
+		return fmt.Errorf("启动监控项调度器失败: %v", err)
+	}
+
 	// 添加定时任务
 	if err := s.addScheduledJobs(); err != nil {
 		return fmt.Errorf("添加定时任务失败: %v", err)
@@ -108,6 +129,9 @@ func (s *Scheduler) Stop() error {
 
 	// 停止API服务
 	s.stopAPIServices()
+
+	// 停止监控项调度器
+	s.stopItemSchedulers()
 
 	// 取消上下文
 	s.cancel()
@@ -390,6 +414,174 @@ func (s *Scheduler) getNextRunTime(entries []cron.Entry) *time.Time {
 	return nextRun
 }
 
+// startItemSchedulers 启动监控项调度器
+func (s *Scheduler) startItemSchedulers() error {
+	if s.configManager == nil {
+		logger.Warn("配置管理器为空，跳过启动监控项调度器")
+		return nil
+	}
+
+	items := s.configManager.GetItems()
+	logger.Infof("获取到 %d 个监控项配置", len(items))
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, item := range items {
+		logger.Infof("处理监控项: ID=%d, Name=%s, Key=%s, Interval=%d",
+			item.ItemID, item.ItemName, item.ItemKey, item.UpdateIntervalSeconds)
+
+		if item.UpdateIntervalSeconds > 0 {
+			scheduler := &ItemScheduler{
+				ItemID:                item.ItemID,
+				ItemName:              item.ItemName,
+				ItemKey:               item.ItemKey,
+				InfoType:              item.InfoType,
+				UpdateIntervalSeconds: item.UpdateIntervalSeconds,
+				Timeout:               item.Timeout,
+				stopChan:              make(chan struct{}),
+				running:               false,
+			}
+
+			s.itemSchedulers[item.ItemID] = scheduler
+			s.startItemScheduler(scheduler)
+			logger.Infof("启动监控项调度器: %s", item.ItemName)
+		} else {
+			logger.Warnf("监控项 %s 的间隔为0，跳过启动", item.ItemName)
+		}
+	}
+
+	logger.Infof("已启动 %d 个监控项调度器", len(s.itemSchedulers))
+	return nil
+}
+
+// startItemScheduler 启动单个监控项调度器
+func (s *Scheduler) startItemScheduler(itemScheduler *ItemScheduler) {
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+
+		interval := time.Duration(itemScheduler.UpdateIntervalSeconds) * time.Second
+		itemScheduler.ticker = time.NewTicker(interval)
+		itemScheduler.running = true
+
+		logger.Infof("启动监控项调度器: %s (ID: %d, 间隔: %v)",
+			itemScheduler.ItemName, itemScheduler.ItemID, interval)
+
+		for {
+			select {
+			case <-s.ctx.Done():
+				itemScheduler.running = false
+				logger.Infof("监控项调度器停止: %s", itemScheduler.ItemName)
+				return
+			case <-itemScheduler.stopChan:
+				itemScheduler.running = false
+				logger.Infof("监控项调度器停止: %s", itemScheduler.ItemName)
+				return
+			case <-itemScheduler.ticker.C:
+				s.collectAndSendItem(itemScheduler)
+			}
+		}
+	}()
+}
+
+// collectAndSendItem 采集并发送监控项数据
+func (s *Scheduler) collectAndSendItem(itemScheduler *ItemScheduler) {
+	ctx, cancel := context.WithTimeout(s.ctx, time.Duration(itemScheduler.Timeout)*time.Second)
+	defer cancel()
+
+	logger.Infof("开始采集监控项: %s (ID: %d)", itemScheduler.ItemName, itemScheduler.ItemID)
+
+	// 根据ItemKey采集数据
+	logger.Infof("正在采集数据: %s (Key: %s)", itemScheduler.ItemName, itemScheduler.ItemKey)
+	value, err := s.collectItemValue(ctx, itemScheduler.ItemKey)
+	if err != nil {
+		logger.Errorf("采集监控项失败: %s, 错误: %v", itemScheduler.ItemName, err)
+		return
+	}
+
+	logger.Infof("采集到数据: %s = %v", itemScheduler.ItemName, value)
+
+	// 发送数据
+	if s.metricsSender != nil {
+		logger.Infof("正在发送数据: %s (ID: %d) = %v", itemScheduler.ItemName, itemScheduler.ItemID, value)
+		err = s.metricsSender.SendMetricImmediate(ctx, itemScheduler.ItemID, value)
+		if err != nil {
+			logger.Errorf("发送监控项数据失败: %s, 错误: %v", itemScheduler.ItemName, err)
+		} else {
+			logger.Infof("✅ 发送监控项数据成功: %s (ID: %d) = %v", itemScheduler.ItemName, itemScheduler.ItemID, value)
+		}
+	} else {
+		logger.Warn("指标发送器为空，无法发送数据")
+	}
+}
+
+// collectItemValue 根据ItemKey采集指标值
+func (s *Scheduler) collectItemValue(ctx context.Context, itemKey string) (interface{}, error) {
+	// 采集系统指标
+	if s.systemCollector != nil && s.systemCollector.IsEnabled() {
+		metrics, err := s.systemCollector.Collect(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("采集系统指标失败: %v", err)
+		}
+
+		// 根据ItemKey提取对应的值
+		switch itemKey {
+		case "system.cpu.util":
+			return metrics.CPU.UsagePercent, nil
+		case "system.cpu.num":
+			return metrics.CPU.Count, nil
+		case "vm.memory.size[total]":
+			return metrics.Memory.Total, nil
+		case "vm.memory.util":
+			return metrics.Memory.UsagePercent, nil
+		case "system.hostname":
+			return metrics.Host.Hostname, nil
+		default:
+			return nil, fmt.Errorf("不支持的监控项: %s", itemKey)
+		}
+	}
+
+	return nil, fmt.Errorf("系统采集器未启用或未找到")
+}
+
+// stopItemSchedulers 停止所有监控项调度器
+func (s *Scheduler) stopItemSchedulers() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, scheduler := range s.itemSchedulers {
+		if scheduler.running {
+			close(scheduler.stopChan)
+			if scheduler.ticker != nil {
+				scheduler.ticker.Stop()
+			}
+		}
+	}
+
+	logger.Info("所有监控项调度器已停止")
+}
+
+// onConfigUpdate 配置更新回调
+func (s *Scheduler) onConfigUpdate(items []services.CollectItem) {
+	logger.Info("收到配置更新通知，重新启动监控项调度器", map[string]interface{}{
+		"item_count": len(items),
+	})
+
+	// 停止现有的监控项调度器
+	s.stopItemSchedulers()
+
+	// 清空调度器映射
+	s.mu.Lock()
+	s.itemSchedulers = make(map[int64]*ItemScheduler)
+	s.mu.Unlock()
+
+	// 重新启动监控项调度器
+	if err := s.startItemSchedulers(); err != nil {
+		logger.Errorf("重新启动监控项调度器失败: %v", err)
+	}
+}
+
 // initAPIServices 初始化API服务
 func (s *Scheduler) initAPIServices() error {
 	// 检查是否配置了API服务
@@ -426,6 +618,9 @@ func (s *Scheduler) initAPIServices() error {
 		Enabled:         s.config.DeviceMonitor.Enabled,
 	}
 	s.configManager = services.NewConfigManager(s.apiClient, logger.GetLogger(), configManagerConfig)
+
+	// 设置配置更新回调
+	s.configManager.SetConfigUpdateCallback(s.onConfigUpdate)
 
 	// 创建指标发送器
 	metricsSenderConfig := &services.MetricsSenderConfig{

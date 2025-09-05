@@ -129,7 +129,7 @@ func (s *HeartbeatService) SendHeartbeat(ctx context.Context) error {
 		return err
 	}
 
-	if resp.Code != 1 {
+	if resp.Code != 200 {
 		err := fmt.Errorf("心跳响应异常: %s", resp.Msg)
 		s.logger.Error("心跳响应异常", map[string]interface{}{
 			"code": resp.Code,

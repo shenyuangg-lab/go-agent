@@ -3,8 +3,6 @@ package services
 import (
 	"context"
 	"fmt"
-	"net"
-	"os"
 	"time"
 
 	"go-agent/pkg/client"
@@ -14,40 +12,23 @@ import (
 
 // RegisterService agent注册服务
 type RegisterService struct {
-	client   *client.DeviceMonitorClient
-	hostname string
-	ipAddr   string
-	logger   *logrus.Logger
+	client *client.DeviceMonitorClient
+	logger *logrus.Logger
 }
 
 // NewRegisterService 创建注册服务
 func NewRegisterService(client *client.DeviceMonitorClient, logger *logrus.Logger) (*RegisterService, error) {
-	hostname, err := os.Hostname()
-	if err != nil {
-		return nil, fmt.Errorf("获取主机名失败: %v", err)
-	}
-
-	ipAddr, err := getLocalIP()
-	if err != nil {
-		return nil, fmt.Errorf("获取本机IP失败: %v", err)
-	}
-
 	return &RegisterService{
-		client:   client,
-		hostname: hostname,
-		ipAddr:   ipAddr,
-		logger:   logger,
+		client: client,
+		logger: logger,
 	}, nil
 }
 
 // Register 执行注册
 func (s *RegisterService) Register(ctx context.Context) error {
-	s.logger.Info("开始注册agent", map[string]interface{}{
-		"hostname": s.hostname,
-		"ip":       s.ipAddr,
-	})
+	s.logger.Info("开始注册agent")
 
-	resp, err := s.client.Register(ctx, s.hostname, s.ipAddr)
+	resp, err := s.client.Register(ctx)
 	if err != nil {
 		s.logger.Error("注册失败", map[string]interface{}{
 			"error": err.Error(),
@@ -55,7 +36,7 @@ func (s *RegisterService) Register(ctx context.Context) error {
 		return err
 	}
 
-	if resp.Code != 1 {
+	if resp.Code != 200 {
 		err := fmt.Errorf("注册失败: %s", resp.Msg)
 		s.logger.Error("注册失败", map[string]interface{}{
 			"code": resp.Code,
@@ -107,27 +88,3 @@ func (s *RegisterService) GetAgentID() string {
 	return s.client.GetAgentID()
 }
 
-// getLocalIP 获取本机IP地址
-func getLocalIP() (string, error) {
-	conn, err := net.Dial("udp", "8.8.8.8:80")
-	if err != nil {
-		// 如果无法连接外网，尝试获取本地网络接口IP
-		addrs, err := net.InterfaceAddrs()
-		if err != nil {
-			return "", err
-		}
-
-		for _, addr := range addrs {
-			if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
-				if ipnet.IP.To4() != nil {
-					return ipnet.IP.String(), nil
-				}
-			}
-		}
-		return "", fmt.Errorf("未找到有效的IP地址")
-	}
-	defer conn.Close()
-
-	localAddr := conn.LocalAddr().(*net.UDPAddr)
-	return localAddr.IP.String(), nil
-}
