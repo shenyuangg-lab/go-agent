@@ -165,7 +165,7 @@ func (ms *MetricsSender) SendMetricImmediate(ctx context.Context, itemID int64, 
 		return err
 	}
 
-	if resp.Code != 1 {
+	if resp.Code != 200 {
 		err := fmt.Errorf("指标发送响应异常: %s", resp.Msg)
 		ms.logger.Error("指标发送响应异常", map[string]interface{}{
 			"item_id": itemID,

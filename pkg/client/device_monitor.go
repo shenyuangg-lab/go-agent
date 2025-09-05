@@ -73,20 +73,23 @@ type MetricsResponse struct {
 	Msg  string `json:"msg"`
 }
 
+// ConfigResponseData 配置响应数据项
+type ConfigResponseData struct {
+	ItemID                int64   `json:"itemId"`
+	ItemName              string  `json:"itemName"`
+	ItemKey               string  `json:"itemkey"`
+	InfoType              int     `json:"infoType"`
+	UpdateIntervalSeconds int     `json:"updateIntervalseconds"`
+	Timeout               int     `json:"timeout"`
+	Description           *string `json:"description"`
+	Intervals             *string `json:"intervals"`
+}
+
 // ConfigResponse 配置获取响应
 type ConfigResponse struct {
-	Code int    `json:"code"`
-	Msg  string `json:"msg"`
-	Data []struct {
-		ItemID                int64   `json:"itemId"`
-		ItemName              string  `json:"itemName"`
-		ItemKey               string  `json:"itemkey"`
-		InfoType              int     `json:"infoType"`
-		UpdateIntervalSeconds int     `json:"updateIntervalseconds"`
-		Timeout               int     `json:"timeout"`
-		Description           *string `json:"description"`
-		Intervals             *string `json:"intervals"`
-	} `json:"data"`
+	Code int                  `json:"code"`
+	Msg  string               `json:"msg"`
+	Data []ConfigResponseData `json:"data"`
 }
 
 // NewDeviceMonitorClient 创建设备监控客户端

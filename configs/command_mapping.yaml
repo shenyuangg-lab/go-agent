@@ -1,0 +1,133 @@
+# 命令映射配置文件
+# 将监控项key映射到具体的执行命令
+# 支持系统命令、脚本文件、数据库查询等
+
+commands:
+  # 系统指标命令
+  "system.cpu.util":
+    type: "powershell"
+    command: "Get-WmiObject -Class Win32_Proce  ssor | Select-Object -ExpandProperty LoadPercentage"
+    timeout: 10
+    description: "CPU使用率"
+    
+  "system.cpu.num":
+    type: "powershell" 
+    command: "Get-WmiObject -Class Win32_ComputerSystem | Select-Object -ExpandProperty NumberOfLogicalProcessors"
+    timeout: 10
+    description: "CPU核心数"
+    
+  "vm.memory.size[total]":
+    type: "powershell"
+    command: "Get-WmiObject -Class Win32_ComputerSystem | Select-Object -ExpandProperty TotalPhysicalMemory"
+    timeout: 10
+    description: "内存总量"
+    
+  "vm.memory.size[available]":
+    type: "powershell"
+    command: "Get-WmiObject -Class Win32_OperatingSystem | Select-Object -ExpandProperty FreePhysicalMemory"
+    timeout: 10
+    description: "可用内存"
+    
+  "vfs.fs.size[C:,total]":
+    type: "powershell"
+    command: "Get-WmiObject -Class Win32_LogicalDisk -Filter \"DeviceID='C:'\" | Select-Object -ExpandProperty Size"
+    timeout: 10
+    description: "C盘总空间"
+    
+  # MySQL数据库命令示例（需要配置数据库连接）
+  "mysql.ping":
+    type: "mysql"
+    command: "SELECT 1"
+    host: "localhost"
+    port: 3306
+    username: "root"
+    password: "password"
+    database: "mysql"
+    timeout: 30
+    description: "MySQL连接检查"
+    
+  "mysql.version":
+    type: "mysql"
+    command: "SELECT VERSION() as version"
+    host: "localhost" 
+    port: 3306
+    username: "root"
+    password: "password"
+    database: "mysql"
+    timeout: 30
+    description: "MySQL版本"
+    
+  "mysql.global_status":
+    type: "mysql"
+    command: "SHOW GLOBAL STATUS LIKE 'Threads_connected'"
+    host: "localhost"
+    port: 3306
+    username: "root"
+    password: "password"
+    database: "mysql"
+    timeout: 30
+    description: "MySQL全局状态"
+    
+  "mysql.slave_status":
+    type: "mysql"
+    command: "SHOW SLAVE STATUS"
+    host: "localhost"
+    port: 3306
+    username: "root"
+    password: "password" 
+    database: "mysql"
+    timeout: 30
+    description: "MySQL主从状态"
+    
+  "mysql.deadlocks_count":
+    type: "mysql"
+    command: "SELECT COUNT(*) as deadlock_count FROM information_schema.INNODB_TRX WHERE trx_state = 'LOCK WAIT'"
+    host: "localhost"
+    port: 3306
+    username: "root"
+    password: "password"
+    database: "information_schema"
+    timeout: 30
+    description: "MySQL死锁计数"
+    
+  "mysql.connected_count":
+    type: "mysql"
+    command: "SHOW STATUS LIKE 'Threads_connected'"
+    host: "localhost"
+    port: 3306
+    username: "root" 
+    password: "password"
+    database: "mysql"
+    timeout: 30
+    description: "MySQL连接数"
+    
+  # 自定义脚本命令示例
+  "custom.script.example":
+    type: "script"
+    command: "./scripts/custom_monitor.bat"
+    timeout: 60
+    description: "自定义监控脚本"
+    
+  # 网络检查命令
+  "net.tcp.listen[,80]":
+    type: "cmd"
+    command: "netstat -an | findstr :80 | findstr LISTEN"
+    timeout: 15
+    description: "检查80端口监听状态"
+
+# 全局配置
+settings:
+  # 默认超时时间（秒）
+  default_timeout: 30
+  
+  # 是否启用命令执行功能
+  enabled: true
+  
+  # 错误重试次数
+  retry_count: 2
+  
+  # 重试间隔（秒）
+  retry_interval: 5
+  
+  # 并发执行限制
+  max_concurrent: 10

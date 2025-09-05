@@ -31,13 +31,14 @@ type ItemScheduler struct {
 
 // Scheduler 任务调度器
 type Scheduler struct {
-	cron            *cron.Cron
-	config          *config.Config
-	systemCollector *collector.SystemCollector
-	snmpCollector   *collector.SNMPCollector
-	scriptCollector *collector.ScriptCollector
-	httpTransport   *transport.HTTPTransport
-	grpcTransport   *transport.GRPCTransport
+	cron             *cron.Cron
+	config           *config.Config
+	systemCollector  *collector.SystemCollector
+	snmpCollector    *collector.SNMPCollector
+	scriptCollector  *collector.ScriptCollector
+	commandCollector *collector.CommandCollector // 新增命令执行采集器
+	httpTransport    *transport.HTTPTransport
+	grpcTransport    *transport.GRPCTransport
 	// 新增API相关服务
 	apiClient        *client.DeviceMonitorClient
 	registerService  *services.RegisterService
@@ -424,6 +425,23 @@ func (s *Scheduler) startItemSchedulers() error {
 	items := s.configManager.GetItems()
 	logger.Infof("获取到 %d 个监控项配置", len(items))
 
+	// 更新命令执行采集器的监控项映射
+	if s.commandCollector != nil {
+		configItems := make([]client.ConfigResponseData, 0, len(items))
+		for _, item := range items {
+			configItems = append(configItems, client.ConfigResponseData{
+				ItemID:                item.ItemID,
+				ItemName:              item.ItemName,
+				ItemKey:               item.ItemKey,
+				InfoType:              item.InfoType,
+				UpdateIntervalSeconds: item.UpdateIntervalSeconds,
+				Timeout:               item.Timeout,
+			})
+		}
+		s.commandCollector.UpdateMonitorItems(configItems)
+		logger.Infof("已更新命令执行采集器的监控项映射: %d 项", len(configItems))
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -518,8 +536,23 @@ func (s *Scheduler) collectAndSendItem(itemScheduler *ItemScheduler) {
 
 // collectItemValue 根据ItemKey采集指标值
 func (s *Scheduler) collectItemValue(ctx context.Context, itemKey string) (interface{}, error) {
-	// 采集系统指标
+	// 优先使用命令执行采集器
+	if s.commandCollector != nil && s.commandCollector.GetEnabledStatus() {
+		logger.Debugf("尝试使用命令执行采集器采集: %s", itemKey)
+		// 命令执行采集器会自动通过其内部的映射执行相应的命令
+		// 这里我们不直接调用，因为命令执行采集器已经在单独的调度中处理
+		// 但我们需要检查是否有对应的命令配置
+		commands := s.commandCollector.ListCommands()
+		if description, exists := commands[itemKey]; exists {
+			logger.Debugf("找到命令配置: %s - %s", itemKey, description)
+			// 注意：这里不应该直接返回，而是让个别调度器处理
+			// 我们继续使用系统采集器作为后备方案
+		}
+	}
+
+	// 采集系统指标（后备方案）
 	if s.systemCollector != nil && s.systemCollector.IsEnabled() {
+		logger.Debugf("使用系统采集器采集: %s", itemKey)
 		metrics, err := s.systemCollector.Collect(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("采集系统指标失败: %v", err)
@@ -538,11 +571,20 @@ func (s *Scheduler) collectItemValue(ctx context.Context, itemKey string) (inter
 		case "system.hostname":
 			return metrics.Host.Hostname, nil
 		default:
+			// 如果系统采集器不支持，检查是否有命令配置
+			if s.commandCollector != nil {
+				commands := s.commandCollector.ListCommands()
+				if _, exists := commands[itemKey]; exists {
+					logger.Infof("监控项 %s 将由命令执行采集器处理", itemKey)
+					// 返回一个占位值，实际值将由命令执行采集器单独发送
+					return fmt.Sprintf("由命令执行采集器处理: %s", itemKey), nil
+				}
+			}
 			return nil, fmt.Errorf("不支持的监控项: %s", itemKey)
 		}
 	}
 
-	return nil, fmt.Errorf("系统采集器未启用或未找到")
+	return nil, fmt.Errorf("所有采集器都未启用或未找到")
 }
 
 // stopItemSchedulers 停止所有监控项调度器
@@ -629,6 +671,17 @@ func (s *Scheduler) initAPIServices() error {
 		Enabled:       s.config.DeviceMonitor.Enabled,
 	}
 	s.metricsSender = services.NewMetricsSender(s.apiClient, logger.GetLogger(), metricsSenderConfig)
+
+	// 初始化命令执行采集器
+	commandConfigPath := "configs/command_mapping.yaml"
+	commandCollector, err := collector.NewCommandCollector(commandConfigPath, logger.GetLogger(), s.apiClient, s.metricsSender)
+	if err != nil {
+		logger.Warnf("初始化命令执行采集器失败: %v，将跳过命令执行功能", err)
+		s.commandCollector = nil
+	} else {
+		s.commandCollector = commandCollector
+		logger.Info("命令执行采集器初始化完成")
+	}
 
 	logger.Info("API服务初始化完成")
 	return nil
