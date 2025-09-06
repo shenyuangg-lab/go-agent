@@ -168,11 +168,30 @@ func (c *DeviceMonitorClient) Heartbeat(ctx context.Context, status string) (*He
 	return &resp, nil
 }
 
-// SendMetrics 发送指标数据
-func (c *DeviceMonitorClient) SendMetrics(ctx context.Context, itemID int64, value interface{}) (*MetricsResponse, error) {
+// SendMetrics 发送指标数据 - 支持单个指标或批量指标
+func (c *DeviceMonitorClient) SendMetrics(ctx context.Context, data interface{}) error {
+	// 判断输入类型
+	switch v := data.(type) {
+	case []map[string]interface{}:
+		// 批量发送
+		return c.sendBatchMetrics(ctx, v)
+	case int64:
+		// 单个指标发送（向后兼容，需要第二个参数作为值）
+		if len(data.([]interface{})) < 2 {
+			return fmt.Errorf("单个指标发送需要itemID和value两个参数")
+		}
+		// 这里需要重新设计单个发送的接口
+		return fmt.Errorf("单个指标发送需要使用SendSingleMetric方法")
+	default:
+		return fmt.Errorf("不支持的数据类型: %T", data)
+	}
+}
+
+// SendSingleMetric 发送单个指标数据
+func (c *DeviceMonitorClient) SendSingleMetric(ctx context.Context, itemID int64, value interface{}) (*MetricsResponse, error) {
 	req := &MetricsRequest{
 		ItemID:    itemID,
-		Timestamp: time.Now().Unix(),
+		Timestamp: time.Now().UnixMilli(), // 精确到毫秒
 		Value:     value,
 	}
 
@@ -183,6 +202,21 @@ func (c *DeviceMonitorClient) SendMetrics(ctx context.Context, itemID int64, val
 	}
 
 	return &resp, nil
+}
+
+// sendBatchMetrics 批量发送指标数据
+func (c *DeviceMonitorClient) sendBatchMetrics(ctx context.Context, metricsData []map[string]interface{}) error {
+	var resp MetricsResponse
+	err := c.doRequest(ctx, "POST", "/deviceMonitor/agent/metrics", metricsData, &resp)
+	if err != nil {
+		return fmt.Errorf("批量发送指标失败: %v", err)
+	}
+
+	if resp.Code != 200 {
+		return fmt.Errorf("批量发送指标响应异常: %s", resp.Msg)
+	}
+
+	return nil
 }
 
 // GetConfig 获取采集配置

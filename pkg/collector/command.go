@@ -153,20 +153,36 @@ func (c *CommandCollector) Collect(ctx context.Context) {
 		return
 	}
 
+	// 统计执行情况
+	totalItems := len(monitorItems)
+	executedCount := 0
+	skippedCount := 0
+	
 	var wg sync.WaitGroup
 	for itemKey, itemID := range monitorItems {
 		// 检查是否有对应的命令配置
 		if cmdConfig, exists := c.commands[itemKey]; exists {
+			executedCount++
 			wg.Add(1)
 			go func(key string, id int64, config CommandConfig) {
 				defer wg.Done()
 				c.executeCommand(ctx, key, id, config)
 			}(itemKey, itemID, cmdConfig)
+		} else {
+			skippedCount++
+			c.logger.Debug("跳过未配置命令的监控项", map[string]interface{}{
+				"item_key": itemKey,
+				"item_id":  itemID,
+			})
 		}
 	}
 
 	wg.Wait()
-	c.logger.Debug("命令执行采集完成")
+	c.logger.Info("命令执行采集完成", map[string]interface{}{
+		"total_items":    totalItems,
+		"executed_count": executedCount,
+		"skipped_count":  skippedCount,
+	})
 }
 
 // executeCommand 执行单个命令
@@ -424,6 +440,53 @@ func (c *CommandCollector) ListCommands() map[string]string {
 	result := make(map[string]string)
 	for key, config := range c.commands {
 		result[key] = config.Description
+	}
+	return result
+}
+
+// GetSupportedItemKeys 获取所有支持的itemKey列表
+func (c *CommandCollector) GetSupportedItemKeys() []string {
+	keys := make([]string, 0, len(c.commands))
+	for key := range c.commands {
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+// HasCommand 检查是否支持指定的itemKey
+func (c *CommandCollector) HasCommand(itemKey string) bool {
+	_, exists := c.commands[itemKey]
+	return exists
+}
+
+// GetCommandConfig 获取指定itemKey的命令配置
+func (c *CommandCollector) GetCommandConfig(itemKey string) (CommandConfig, bool) {
+	config, exists := c.commands[itemKey]
+	return config, exists
+}
+
+// GetActiveMonitorItems 获取当前激活的监控项
+func (c *CommandCollector) GetActiveMonitorItems() map[string]int64 {
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
+	
+	result := make(map[string]int64)
+	for k, v := range c.monitorItems {
+		result[k] = v
+	}
+	return result
+}
+
+// GetExecutableItems 获取可执行的监控项（既有监控配置又有命令配置）
+func (c *CommandCollector) GetExecutableItems() map[string]int64 {
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
+	
+	result := make(map[string]int64)
+	for itemKey, itemID := range c.monitorItems {
+		if _, exists := c.commands[itemKey]; exists {
+			result[itemKey] = itemID
+		}
 	}
 	return result
 }

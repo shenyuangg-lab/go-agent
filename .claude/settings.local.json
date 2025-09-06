@@ -15,7 +15,8 @@
       "Read(/E:\\work\\go-agent\\configs/**)",
       "Read(/E:\\work\\go-agent\\pkg/**)",
       "Read(/E:\\work\\go-agent\\pkg\\config/**)",
-      "Read(/E:\\work\\go-agent\\pkg\\config/**)"
+      "Read(/E:\\work\\go-agent\\pkg\\config/**)",
+      "Bash(go build:*)"
     ],
     "deny": [],
     "ask": []

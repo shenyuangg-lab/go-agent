@@ -1,0 +1,318 @@
+# 内置监控项配置文件
+# 定义支持的所有内置监控项，与数据中心传输的itemKey进行匹配
+# 当数据中心传输 "itemKey": "system.cpu.util" 时，会匹配到对应的监控项
+# "updateIntervalSeconds": 30 会设置为监控间隔时间
+
+builtin_items:
+  # 基础系统指标
+  "system.cpu.util":
+    name: "CPU使用率"
+    description: "系统CPU使用率百分比"
+    unit: "percent"
+    type: "float"
+    default_interval: 30
+    source: "system_collector"
+    field_path: "CPU.UsagePercent"
+    
+  "system.cpu.num":
+    name: "CPU核心数"
+    description: "CPU逻辑核心数量"
+    unit: "count"
+    type: "int"
+    default_interval: 300
+    source: "system_collector"
+    field_path: "CPU.Count"
+    
+  "vm.memory.size[total]":
+    name: "内存总量"
+    description: "系统总内存容量（字节）"
+    unit: "bytes"
+    type: "uint64"
+    default_interval: 300
+    source: "system_collector"
+    field_path: "Memory.Total"
+    
+  "vm.memory.util":
+    name: "内存使用率"
+    description: "内存使用率百分比"
+    unit: "percent"
+    type: "float"
+    default_interval: 30
+    source: "system_collector"
+    field_path: "Memory.UsagePercent"
+    
+  "system.hostname":
+    name: "主机名"
+    description: "系统主机名"
+    unit: "string"
+    type: "string"
+    default_interval: 3600
+    source: "system_collector"
+    field_path: "Host.Hostname"
+
+  # 扩展内存指标
+  "vm.memory.size[available]":
+    name: "可用内存"
+    description: "系统可用内存容量（字节）"
+    unit: "bytes"
+    type: "uint64"
+    default_interval: 30
+    source: "system_collector"
+    field_path: "Memory.Available"
+    
+  "vm.memory.size[used]":
+    name: "已用内存"
+    description: "系统已用内存容量（字节）"
+    unit: "bytes"
+    type: "uint64"
+    default_interval: 30
+    source: "system_collector"
+    field_path: "Memory.Used"
+
+  # 系统信息
+  "system.uname":
+    name: "操作系统信息"
+    description: "操作系统类型和版本"
+    unit: "string"
+    type: "string"
+    default_interval: 3600
+    source: "system_collector"
+    field_path: "Host.OS"
+    
+  "system.uptime":
+    name: "系统运行时间"
+    description: "系统启动后运行的时间（秒）"
+    unit: "seconds"
+    type: "uint64"
+    default_interval: 60
+    source: "system_collector"
+    field_path: "Host.Uptime"
+
+  # CPU负载指标（Linux/Unix系统）
+  "system.cpu.load[percpu,avg1]":
+    name: "1分钟平均负载"
+    description: "1分钟平均CPU负载"
+    unit: "load"
+    type: "float"
+    default_interval: 60
+    source: "system_collector"
+    field_path: "CPU.LoadAvg.Load1"
+    
+  "system.cpu.load[percpu,avg5]":
+    name: "5分钟平均负载"
+    description: "5分钟平均CPU负载"
+    unit: "load"
+    type: "float"
+    default_interval: 60
+    source: "system_collector"
+    field_path: "CPU.LoadAvg.Load5"
+    
+  "system.cpu.load[percpu,avg15]":
+    name: "15分钟平均负载"
+    description: "15分钟平均CPU负载"
+    unit: "load"
+    type: "float"
+    default_interval: 60
+    source: "system_collector"
+    field_path: "CPU.LoadAvg.Load15"
+
+  # 磁盘空间指标 - Linux/Unix 根目录
+  "vfs.fs.size[/,total]":
+    name: "根目录总空间"
+    description: "根目录(/）总磁盘空间（字节）"
+    unit: "bytes"
+    type: "uint64"
+    default_interval: 300
+    source: "system_collector"
+    field_path: "Disk[/].Total"
+    
+  "vfs.fs.size[/,used]":
+    name: "根目录已用空间"
+    description: "根目录(/）已用磁盘空间（字节）"
+    unit: "bytes"
+    type: "uint64"
+    default_interval: 300
+    source: "system_collector"
+    field_path: "Disk[/].Used"
+    
+  "vfs.fs.size[/,free]":
+    name: "根目录剩余空间"
+    description: "根目录(/）剩余磁盘空间（字节）"
+    unit: "bytes"
+    type: "uint64"
+    default_interval: 300
+    source: "system_collector"
+    field_path: "Disk[/].Free"
+    
+  "vfs.fs.size[/,pused]":
+    name: "根目录使用率"
+    description: "根目录(/）磁盘空间使用率百分比"
+    unit: "percent"
+    type: "float"
+    default_interval: 300
+    source: "system_collector"
+    field_path: "Disk[/].UsagePercent"
+
+  # 磁盘空间指标 - Windows C盘
+  "vfs.fs.size[C:,total]":
+    name: "C盘总空间"
+    description: "C盘总磁盘空间（字节）"
+    unit: "bytes"
+    type: "uint64"
+    default_interval: 300
+    source: "system_collector"
+    field_path: "Disk[C:].Total"
+    
+  "vfs.fs.size[C:,used]":
+    name: "C盘已用空间"
+    description: "C盘已用磁盘空间（字节）"
+    unit: "bytes"
+    type: "uint64"
+    default_interval: 300
+    source: "system_collector"
+    field_path: "Disk[C:].Used"
+    
+  "vfs.fs.size[C:,free]":
+    name: "C盘剩余空间"
+    description: "C盘剩余磁盘空间（字节）"
+    unit: "bytes"
+    type: "uint64"
+    default_interval: 300
+    source: "system_collector"
+    field_path: "Disk[C:].Free"
+    
+  "vfs.fs.size[C:,pused]":
+    name: "C盘使用率"
+    description: "C盘磁盘空间使用率百分比"
+    unit: "percent"
+    type: "float"
+    default_interval: 300
+    source: "system_collector"
+    field_path: "Disk[C:].UsagePercent"
+
+  # 网络接口指标 - 以太网
+  "net.if.in[eth0]":
+    name: "以太网接收字节数"
+    description: "以太网接口接收的字节数"
+    unit: "bytes"
+    type: "uint64"
+    default_interval: 60
+    source: "system_collector"
+    field_path: "Network[eth0].BytesRecv"
+    
+  "net.if.out[eth0]":
+    name: "以太网发送字节数"
+    description: "以太网接口发送的字节数"
+    unit: "bytes"
+    type: "uint64"
+    default_interval: 60
+    source: "system_collector"
+    field_path: "Network[eth0].BytesSent"
+    
+  "net.if.in[eth0,packets]":
+    name: "以太网接收包数"
+    description: "以太网接口接收的数据包数"
+    unit: "packets"
+    type: "uint64"
+    default_interval: 60
+    source: "system_collector"
+    field_path: "Network[eth0].PacketsRecv"
+    
+  "net.if.out[eth0,packets]":
+    name: "以太网发送包数"
+    description: "以太网接口发送的数据包数"
+    unit: "packets"
+    type: "uint64"
+    default_interval: 60
+    source: "system_collector"
+    field_path: "Network[eth0].PacketsSent"
+
+  # 网络接口指标 - 无线网卡
+  "net.if.in[wlan0]":
+    name: "无线网卡接收字节数"
+    description: "无线网卡接收的字节数"
+    unit: "bytes"
+    type: "uint64"
+    default_interval: 60
+    source: "system_collector"
+    field_path: "Network[wlan0].BytesRecv"
+    
+  "net.if.out[wlan0]":
+    name: "无线网卡发送字节数"
+    description: "无线网卡发送的字节数"
+    unit: "bytes"
+    type: "uint64"
+    default_interval: 60
+    source: "system_collector"
+    field_path: "Network[wlan0].BytesSent"
+
+  # 网络接口指标 - Windows风格
+  "net.if.in[Local Area Connection]":
+    name: "本地连接接收字节数"
+    description: "本地连接接收的字节数"
+    unit: "bytes"
+    type: "uint64"
+    default_interval: 60
+    source: "system_collector"
+    field_path: "Network[Local Area Connection].BytesRecv"
+    
+  "net.if.out[Local Area Connection]":
+    name: "本地连接发送字节数"
+    description: "本地连接发送的字节数"
+    unit: "bytes"
+    type: "uint64"
+    default_interval: 60
+    source: "system_collector"
+    field_path: "Network[Local Area Connection].BytesSent"
+
+# 配置设置
+settings:
+  # 默认监控间隔（秒）
+  default_interval: 30
+  
+  # 启用内置监控项功能
+  enabled: true
+  
+  # 监控项更新策略
+  update_strategy: "merge"  # merge: 合并, replace: 替换
+  
+  # 自动发现网络接口
+  auto_discover_network_interfaces: true
+  
+  # 自动发现磁盘分区
+  auto_discover_disk_partitions: true
+  
+  # 支持的数据类型映射
+  data_types:
+    string: "string"
+    int: "integer"
+    uint64: "unsigned_integer_64"
+    float: "float"
+    percent: "percentage"
+    bytes: "bytes_size"
+    seconds: "duration_seconds"
+    count: "counter"
+    load: "system_load"
+    packets: "network_packets"
+
+# 兼容性映射 - 处理不同系统的差异
+compatibility_mapping:
+  # Windows系统的磁盘路径映射
+  windows:
+    disk_paths:
+      "/": "C:"
+      "/boot": "C:"
+      "/var": "C:"
+      "/tmp": "C:"
+  
+  # Linux系统的网络接口映射
+  linux:
+    network_interfaces:
+      "eth0": ["enp0s3", "ens33", "eno1"]
+      "wlan0": ["wlp2s0", "wlo1"]
+  
+  # macOS系统的网络接口映射
+  darwin:
+    network_interfaces:
+      "eth0": ["en0", "en1"]
+      "wlan0": ["en0"]

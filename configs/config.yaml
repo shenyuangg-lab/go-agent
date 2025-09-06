@@ -4,7 +4,7 @@
 # 代理基本配置
 agent:
   name: "go-agent"
-  interval: "30s"  # 采集间隔
+  interval: "30s"  # 采集间隔（30秒）
   timeout: "10s"   # 采集超时时间
 
 # 采集配置

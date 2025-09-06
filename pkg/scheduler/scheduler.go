@@ -45,6 +45,8 @@ type Scheduler struct {
 	heartbeatService *services.HeartbeatService
 	configManager    *services.ConfigManager
 	metricsSender    *services.MetricsSender
+	// 内置键管理器
+	builtinKeyManager *collector.BuiltinKeyManager
 	// 监控项调度器
 	itemSchedulers map[int64]*ItemScheduler
 	ctx            context.Context
@@ -87,29 +89,55 @@ func (s *Scheduler) Start(cfg *config.Config) error {
 		return fmt.Errorf("初始化传输器失败: %v", err)
 	}
 
-	// 初始化API服务
-	if err := s.initAPIServices(); err != nil {
-		return fmt.Errorf("初始化API服务失败: %v", err)
+	// 初始化内置键管理器
+	if err := s.initBuiltinKeyManager(); err != nil {
+		logger.Warnf("初始化内置键管理器失败: %v", err)
+		// 这里只是警告，不阻止启动
 	}
 
-	// 启动API服务
-	if err := s.startAPIServices(); err != nil {
-		return fmt.Errorf("启动API服务失败: %v", err)
-	}
-
-	// 启动监控项调度器
-	if err := s.startItemSchedulers(); err != nil {
-		return fmt.Errorf("启动监控项调度器失败: %v", err)
-	}
-
-	// 添加定时任务
+	// 首先添加基础的定时任务（系统指标采集等），这些不依赖API
 	if err := s.addScheduledJobs(); err != nil {
 		return fmt.Errorf("添加定时任务失败: %v", err)
+	}
+
+	// 初始化API服务
+	if err := s.initAPIServices(); err != nil {
+		logger.Warnf("初始化API服务失败: %v，将仅使用本地采集功能", err)
+		// 不返回错误，让基础功能继续运行
+	} else {
+		// 并行启动API服务，避免阻塞主流程
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					logger.Errorf("API服务启动出现panic: %v", r)
+				}
+			}()
+			
+			if err := s.startAPIServices(); err != nil {
+				logger.Errorf("启动API服务失败: %v", err)
+			} else {
+				logger.Info("API服务启动成功")
+				
+				// API服务启动后，启动监控项调度器
+				if err := s.startItemSchedulers(); err != nil {
+					logger.Errorf("启动监控项调度器失败: %v", err)
+				}
+			}
+		}()
 	}
 
 	// 启动cron调度器
 	s.cron.Start()
 	s.running = true
+
+	// 增加一个长期运行的任务到WaitGroup，确保Wait()会阻塞
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		// 等待上下文取消
+		<-s.ctx.Done()
+		logger.Debug("调度器主循环已停止")
+	}()
 
 	logger.Info("调度器已启动")
 
@@ -173,6 +201,20 @@ func (s *Scheduler) initCollectors() error {
 		s.config.Collect.Script.Timeout,
 	)
 
+	return nil
+}
+
+// initBuiltinKeyManager 初始化内置键管理器
+func (s *Scheduler) initBuiltinKeyManager() error {
+	s.builtinKeyManager = collector.NewBuiltinKeyManager()
+	allKeys := s.builtinKeyManager.GetAllKeys()
+	logger.Infof("内置键管理器初始化成功，支持 %d 个内置监控项", len(allKeys))
+	
+	// 打印所有支持的键
+	for _, key := range allKeys {
+		logger.Debugf("支持的内置键: %s - %s", key.Key, key.Description)
+	}
+	
 	return nil
 }
 
@@ -254,6 +296,8 @@ func (s *Scheduler) collectAndSendSystemMetrics() {
 	ctx, cancel := context.WithTimeout(s.ctx, s.config.Agent.Timeout)
 	defer cancel()
 
+	logger.Debug("开始执行系统指标采集和上报任务")
+
 	// 采集系统指标
 	metrics, err := s.systemCollector.Collect(ctx)
 	if err != nil {
@@ -261,23 +305,71 @@ func (s *Scheduler) collectAndSendSystemMetrics() {
 		return
 	}
 
-	// 发送到HTTP服务器
-	if s.config.Transport.HTTP.Enabled {
-		if err := s.httpTransport.Send(ctx, metrics, "system", nil); err != nil {
-			logger.Errorf("发送系统指标到HTTP失败: %v", err)
-		} else {
-			logger.Debug("系统指标已发送到HTTP服务器")
+	logger.Debugf("系统指标采集成功: CPU=%.2f%%, Memory=%.2f%%", metrics.CPU.UsagePercent, metrics.Memory.UsagePercent)
+
+	// 优先使用数据中心API上报（如果可用）
+	if s.apiClient != nil && s.apiClient.GetAgentID() != "" {
+		logger.Debug("使用数据中心API上报系统指标")
+		s.sendSystemMetricsToDataCenter(ctx, metrics)
+	} else {
+		logger.Debug("数据中心API不可用，使用传统HTTP传输")
+		// 发送到HTTP服务器（传统方式）
+		if s.config.Transport.HTTP.Enabled {
+			if err := s.httpTransport.Send(ctx, metrics, "system", nil); err != nil {
+				logger.Errorf("发送系统指标到HTTP失败: %v", err)
+			} else {
+				logger.Debug("系统指标已发送到HTTP服务器")
+			}
 		}
+
+		// 发送到gRPC服务器
+		if s.config.Transport.GRPC.Enabled && s.grpcTransport.IsConnected() {
+			if err := s.grpcTransport.Send(ctx, metrics, "system", nil); err != nil {
+				logger.Errorf("发送系统指标到gRPC失败: %v", err)
+			} else {
+				logger.Debug("系统指标已发送到gRPC服务器")
+			}
+		}
+	}
+}
+
+// sendSystemMetricsToDataCenter 使用数据中心API发送系统指标
+func (s *Scheduler) sendSystemMetricsToDataCenter(ctx context.Context, metrics *collector.SystemMetrics) {
+	// 定义基础监控项映射（固定ItemID）
+	baseMetrics := []struct {
+		itemID int64
+		itemKey string
+		getValue func() interface{}
+	}{
+		{1430255329320961, "system.cpu.util", func() interface{} { return metrics.CPU.UsagePercent }},
+		{1430255329320962, "system.cpu.num", func() interface{} { return metrics.CPU.Count }},
+		{1430255329320963, "vm.memory.size[total]", func() interface{} { return metrics.Memory.Total }},
+		{1430255329320964, "vm.memory.util", func() interface{} { return metrics.Memory.UsagePercent }},
+		{1430255329320965, "system.hostname", func() interface{} { return metrics.Host.Hostname }},
 	}
 
-	// 发送到gRPC服务器
-	if s.config.Transport.GRPC.Enabled && s.grpcTransport.IsConnected() {
-		if err := s.grpcTransport.Send(ctx, metrics, "system", nil); err != nil {
-			logger.Errorf("发送系统指标到gRPC失败: %v", err)
-		} else {
-			logger.Debug("系统指标已发送到gRPC服务器")
+	// 逐个发送指标
+	successCount := 0
+	for _, metric := range baseMetrics {
+		value := metric.getValue()
+		logger.Debugf("准备上报监控项: %s = %v", metric.itemKey, value)
+		
+		resp, err := s.apiClient.SendSingleMetric(ctx, metric.itemID, value)
+		if err != nil {
+			logger.Errorf("上报监控项失败 %s: %v", metric.itemKey, err)
+			continue
 		}
+		
+		if resp.Code != 200 {
+			logger.Errorf("上报监控项响应异常 %s: %s", metric.itemKey, resp.Msg)
+			continue
+		}
+		
+		logger.Debugf("监控项上报成功: %s", metric.itemKey)
+		successCount++
 	}
+	
+	logger.Infof("系统指标上报完成: 成功 %d/%d 项", successCount, len(baseMetrics))
 }
 
 // collectAndSendSNMPMetrics 采集并发送SNMP指标
@@ -536,50 +628,71 @@ func (s *Scheduler) collectAndSendItem(itemScheduler *ItemScheduler) {
 
 // collectItemValue 根据ItemKey采集指标值
 func (s *Scheduler) collectItemValue(ctx context.Context, itemKey string) (interface{}, error) {
-	// 优先使用命令执行采集器
+	// 按优先级顺序处理：命令映射 > 内置键 > 硬编码（向后兼容）
+	
+	// 1. 首先检查命令执行采集器（最高优先级 - 用户自定义）
 	if s.commandCollector != nil && s.commandCollector.GetEnabledStatus() {
-		logger.Debugf("尝试使用命令执行采集器采集: %s", itemKey)
-		// 命令执行采集器会自动通过其内部的映射执行相应的命令
-		// 这里我们不直接调用，因为命令执行采集器已经在单独的调度中处理
-		// 但我们需要检查是否有对应的命令配置
-		commands := s.commandCollector.ListCommands()
-		if description, exists := commands[itemKey]; exists {
-			logger.Debugf("找到命令配置: %s - %s", itemKey, description)
-			// 注意：这里不应该直接返回，而是让个别调度器处理
-			// 我们继续使用系统采集器作为后备方案
+		if s.commandCollector.HasCommand(itemKey) {
+			logger.Debugf("🎯 使用命令执行采集器处理: %s", itemKey)
+			commands := s.commandCollector.ListCommands()
+			if description, exists := commands[itemKey]; exists {
+				logger.Debugf("找到命令配置: %s - %s", itemKey, description)
+				// 返回一个占位值，实际值将由命令执行采集器单独发送
+				return fmt.Sprintf("由命令执行采集器处理: %s", itemKey), nil
+			}
 		}
 	}
 
-	// 采集系统指标（后备方案）
+	// 2. 然后检查内置键管理器（中等优先级 - 标准化处理）
+	if s.builtinKeyManager != nil {
+		if _, exists := s.builtinKeyManager.GetKey(itemKey); exists {
+			logger.Debugf("🔧 使用内置键管理器处理: %s", itemKey)
+			
+			// 获取系统指标
+			if s.systemCollector != nil && s.systemCollector.IsEnabled() {
+				metrics, err := s.systemCollector.Collect(ctx)
+				if err != nil {
+					return nil, fmt.Errorf("采集系统指标失败: %v", err)
+				}
+
+				// 使用内置键管理器提取值
+				value, err := s.builtinKeyManager.ExtractValue(itemKey, metrics)
+				if err != nil {
+					logger.Warnf("内置键管理器提取 %s 失败: %v，尝试其他方式", itemKey, err)
+				} else {
+					logger.Debugf("内置键管理器成功提取 %s = %v", itemKey, value)
+					return value, nil
+				}
+			}
+		}
+	}
+
+	// 3. 最后使用硬编码系统采集器（最低优先级 - 向后兼容）
 	if s.systemCollector != nil && s.systemCollector.IsEnabled() {
-		logger.Debugf("使用系统采集器采集: %s", itemKey)
+		logger.Debugf("⚙️ 使用硬编码系统采集器（向后兼容）: %s", itemKey)
 		metrics, err := s.systemCollector.Collect(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("采集系统指标失败: %v", err)
 		}
 
-		// 根据ItemKey提取对应的值
+		// 硬编码的常用监控项（向后兼容）
 		switch itemKey {
 		case "system.cpu.util":
+			logger.Debugf("硬编码处理 CPU 使用率")
 			return metrics.CPU.UsagePercent, nil
 		case "system.cpu.num":
+			logger.Debugf("硬编码处理 CPU 核心数")
 			return metrics.CPU.Count, nil
 		case "vm.memory.size[total]":
+			logger.Debugf("硬编码处理内存总量")
 			return metrics.Memory.Total, nil
 		case "vm.memory.util":
+			logger.Debugf("硬编码处理内存使用率")
 			return metrics.Memory.UsagePercent, nil
 		case "system.hostname":
+			logger.Debugf("硬编码处理主机名")
 			return metrics.Host.Hostname, nil
 		default:
-			// 如果系统采集器不支持，检查是否有命令配置
-			if s.commandCollector != nil {
-				commands := s.commandCollector.ListCommands()
-				if _, exists := commands[itemKey]; exists {
-					logger.Infof("监控项 %s 将由命令执行采集器处理", itemKey)
-					// 返回一个占位值，实际值将由命令执行采集器单独发送
-					return fmt.Sprintf("由命令执行采集器处理: %s", itemKey), nil
-				}
-			}
 			return nil, fmt.Errorf("不支持的监控项: %s", itemKey)
 		}
 	}

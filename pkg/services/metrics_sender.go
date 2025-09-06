@@ -155,7 +155,7 @@ func (ms *MetricsSender) SendMetricImmediate(ctx context.Context, itemID int64, 
 	// 处理数组类型的值，只取第一个元素
 	processedValue := ms.processValue(value)
 
-	resp, err := ms.client.SendMetrics(ctx, itemID, processedValue)
+	resp, err := ms.client.SendSingleMetric(ctx, itemID, processedValue)
 	if err != nil {
 		ms.logger.Error("立即发送指标失败", map[string]interface{}{
 			"item_id": itemID,

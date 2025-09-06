@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-此文件为在该代码库中工作的 Claude Code (claude.ai/code) 提供指导。
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## 命令
 
@@ -15,10 +15,21 @@
 - 格式化代码: `go fmt ./...`
 - 检查代码: `go vet ./...` 
 - 运行所有模块: `go run ./cmd/agent/main.go`
+- 更新依赖: `go mod tidy`
 
 ## 架构
 
 这是一个使用 Cobra CLI 框架构建的 Go 监控代理，用于收集系统指标并通过 HTTP/gRPC 传输。
+
+### 关键技术栈
+
+- **CLI框架**: Cobra - 命令行界面
+- **配置管理**: Viper - 支持多格式配置文件（YAML、JSON等）
+- **任务调度**: Cron v3 - 基于时间的任务调度
+- **系统指标**: gopsutil - 跨平台系统信息收集
+- **SNMP**: gosnmp - 网络设备监控
+- **日志**: logrus - 结构化日志
+- **传输**: 原生 HTTP 和 gRPC
 
 ### 核心组件
 
@@ -34,6 +45,8 @@
 - `system.go` - 使用 gopsutil 的系统指标（CPU、内存、磁盘、网络）
 - `snmp.go` - 使用 gosnmp 的 SNMP 设备监控（v1/v2c/v3）
 - `script.go` - 自定义脚本执行和结果采集
+- `builtin_keys.go` - 内置指标键管理器，定义标准化指标采集接口
+- `command.go` - 命令执行采集器
 
 **传输**: `pkg/transport/`
 - `http.go` - 带重试机制的 HTTP POST 数据传输
@@ -76,9 +89,29 @@
 
 **新服务**: 在 `pkg/services/` 中创建新的业务服务，实现相应的启动和停止方法，然后在调度器中集成
 
+### Windows特定命令
+
+Windows平台提供了便捷的批处理脚本：
+- 构建: `build.bat` (Windows) 或 `build.ps1` (PowerShell)
+- 启动: `start.bat`
+- 安装服务: `install_service.bat` 
+- 卸载服务: `uninstall_service.bat`
+- 模拟监控: `simulate_monitor.ps1`
+
 ### 测试
 
-目前项目没有测试文件。建议为核心组件添加单元测试：
-- 运行测试: `go test ./...`
+项目中包含多个测试文件（test_*.go），用于测试各种功能：
+- 运行单个测试: `go run test_register.go` 或 `go run test_complete_flow.go`
+- 运行标准单元测试: `go test ./...`
 - 运行覆盖率测试: `go test -cover ./...`
 - 运行基准测试: `go test -bench=. ./...`
+
+主要测试文件：
+- `test_register.go` - 测试代理注册功能
+- `test_complete_flow.go` - 测试完整数据流
+- `test_metrics_push.go` - 测试指标推送
+- `test_hostinfo.go` - 测试主机信息采集
+- `test_builtin_keys.go` - 测试内置键值采集
+- `test_full_monitoring_flow.go` - 测试完整监控流程
+- `test_monitoring_demo.go` - 监控演示测试
+- `test_local_collection.go` - 本地采集测试
