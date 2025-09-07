@@ -6,7 +6,7 @@ commands:
   # 系统指标命令
   "system.cpu.util":
     type: "powershell"
-    command: "Get-WmiObject -Class Win32_Proce  ssor | Select-Object -ExpandProperty LoadPercentage"
+    command: "Get-WmiObject -Class Win32_Processor | Select-Object -ExpandProperty LoadPercentage"
     timeout: 10
     description: "CPU使用率"
     
