@@ -27,6 +27,8 @@ type ItemScheduler struct {
 	ticker                *time.Ticker
 	stopChan              chan struct{}
 	running               bool
+	customTrigger         *CustomTrigger // 自定义触发器
+	lastExecutionTime     *time.Time     // 上次执行时间
 }
 
 // Scheduler 任务调度器
@@ -58,18 +60,14 @@ type Scheduler struct {
 
 // New 创建新的调度器
 func New() *Scheduler {
-	ctx, cancel := context.WithCancel(context.Background())
-
 	return &Scheduler{
 		cron:           cron.New(cron.WithSeconds()),
-		ctx:            ctx,
-		cancel:         cancel,
 		itemSchedulers: make(map[int64]*ItemScheduler),
 	}
 }
 
 // Start 启动调度器
-func (s *Scheduler) Start(cfg *config.Config) error {
+func (s *Scheduler) Start(parentCtx context.Context, cfg *config.Config) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -77,6 +75,9 @@ func (s *Scheduler) Start(cfg *config.Config) error {
 		return fmt.Errorf("调度器已在运行")
 	}
 
+	// 将父上下文与调度器上下文合并
+	s.ctx, s.cancel = context.WithCancel(parentCtx)
+	
 	s.config = cfg
 
 	// 初始化采集器
@@ -112,12 +113,12 @@ func (s *Scheduler) Start(cfg *config.Config) error {
 					logger.Errorf("API服务启动出现panic: %v", r)
 				}
 			}()
-			
+
 			if err := s.startAPIServices(); err != nil {
 				logger.Errorf("启动API服务失败: %v", err)
 			} else {
 				logger.Info("API服务启动成功")
-				
+
 				// API服务启动后，启动监控项调度器
 				if err := s.startItemSchedulers(); err != nil {
 					logger.Errorf("启动监控项调度器失败: %v", err)
@@ -209,12 +210,12 @@ func (s *Scheduler) initBuiltinKeyManager() error {
 	s.builtinKeyManager = collector.NewBuiltinKeyManager()
 	allKeys := s.builtinKeyManager.GetAllKeys()
 	logger.Infof("内置键管理器初始化成功，支持 %d 个内置监控项", len(allKeys))
-	
+
 	// 打印所有支持的键
 	for _, key := range allKeys {
 		logger.Debugf("支持的内置键: %s - %s", key.Key, key.Description)
 	}
-	
+
 	return nil
 }
 
@@ -255,34 +256,35 @@ func (s *Scheduler) addScheduledJobs() error {
 		intervalSeconds = 30 // 默认30秒
 	}
 
-	// 添加系统指标采集任务
-	if s.config.Collect.System.Enabled {
+	// 添加系统指标采集任务 - 仅在没有API服务时使用
+	// 如果有API服务，系统指标采集将通过监控项调度器处理
+	if s.config.Collect.System.Enabled && (s.config.DeviceMonitor == nil || !s.config.DeviceMonitor.Enabled) {
 		cronSpec := fmt.Sprintf("*/%d * * * * *", intervalSeconds)
 		_, err := s.cron.AddFunc(cronSpec, s.collectAndSendSystemMetrics)
 		if err != nil {
 			return fmt.Errorf("添加系统指标采集任务失败: %v", err)
 		}
-		logger.Infof("已添加系统指标采集任务，间隔: %s", s.config.Agent.Interval)
+		logger.Infof("已添加系统指标采集任务（本地模式），间隔: %s", s.config.Agent.Interval)
 	}
 
-	// 添加SNMP采集任务
-	if s.config.Collect.SNMP.Enabled {
+	// 添加SNMP采集任务 - 仅在没有API服务时使用
+	if s.config.Collect.SNMP.Enabled && (s.config.DeviceMonitor == nil || !s.config.DeviceMonitor.Enabled) {
 		cronSpec := fmt.Sprintf("*/%d * * * * *", intervalSeconds)
 		_, err := s.cron.AddFunc(cronSpec, s.collectAndSendSNMPMetrics)
 		if err != nil {
 			return fmt.Errorf("添加SNMP采集任务失败: %v", err)
 		}
-		logger.Infof("已添加SNMP采集任务，间隔: %s", s.config.Agent.Interval)
+		logger.Infof("已添加SNMP采集任务（本地模式），间隔: %s", s.config.Agent.Interval)
 	}
 
-	// 添加脚本执行任务
-	if s.config.Collect.Script.Enabled {
+	// 添加脚本执行任务 - 仅在没有API服务时使用  
+	if s.config.Collect.Script.Enabled && (s.config.DeviceMonitor == nil || !s.config.DeviceMonitor.Enabled) {
 		cronSpec := fmt.Sprintf("*/%d * * * * *", intervalSeconds)
 		_, err := s.cron.AddFunc(cronSpec, s.collectAndSendScriptMetrics)
 		if err != nil {
 			return fmt.Errorf("添加脚本执行任务失败: %v", err)
 		}
-		logger.Infof("已添加脚本执行任务，间隔: %s", s.config.Agent.Interval)
+		logger.Infof("已添加脚本执行任务（本地模式），间隔: %s", s.config.Agent.Interval)
 	}
 
 	return nil
@@ -337,8 +339,8 @@ func (s *Scheduler) collectAndSendSystemMetrics() {
 func (s *Scheduler) sendSystemMetricsToDataCenter(ctx context.Context, metrics *collector.SystemMetrics) {
 	// 定义基础监控项映射（固定ItemID）
 	baseMetrics := []struct {
-		itemID int64
-		itemKey string
+		itemID   int64
+		itemKey  string
 		getValue func() interface{}
 	}{
 		{1430255329320961, "system.cpu.util", func() interface{} { return metrics.CPU.UsagePercent }},
@@ -353,22 +355,22 @@ func (s *Scheduler) sendSystemMetricsToDataCenter(ctx context.Context, metrics *
 	for _, metric := range baseMetrics {
 		value := metric.getValue()
 		logger.Debugf("准备上报监控项: %s = %v", metric.itemKey, value)
-		
+
 		resp, err := s.apiClient.SendSingleMetric(ctx, metric.itemID, value)
 		if err != nil {
 			logger.Errorf("上报监控项失败 %s: %v", metric.itemKey, err)
 			continue
 		}
-		
+
 		if resp.Code != 200 {
 			logger.Errorf("上报监控项响应异常 %s: %s", metric.itemKey, resp.Msg)
 			continue
 		}
-		
+
 		logger.Debugf("监控项上报成功: %s", metric.itemKey)
 		successCount++
 	}
-	
+
 	logger.Infof("系统指标上报完成: 成功 %d/%d 项", successCount, len(baseMetrics))
 }
 
@@ -538,10 +540,14 @@ func (s *Scheduler) startItemSchedulers() error {
 	defer s.mu.Unlock()
 
 	for _, item := range items {
-		logger.Infof("处理监控项: ID=%d, Name=%s, Key=%s, Interval=%d",
-			item.ItemID, item.ItemName, item.ItemKey, item.UpdateIntervalSeconds)
+		logger.Infof("处理监控项: ID=%d, Name=%s, Key=%s, Interval=%d, CustomIntervals=%d",
+			item.ItemID, item.ItemName, item.ItemKey, item.UpdateIntervalSeconds, len(item.Intervals))
 
-		if item.UpdateIntervalSeconds > 0 {
+		// 创建自定义触发器
+		customTrigger := NewCustomTrigger(&item, logger.GetLogger())
+
+		// 如果有间隔配置（默认间隔或自定义间隔），则启动调度器
+		if item.UpdateIntervalSeconds > 0 || len(item.Intervals) > 0 {
 			scheduler := &ItemScheduler{
 				ItemID:                item.ItemID,
 				ItemName:              item.ItemName,
@@ -551,13 +557,20 @@ func (s *Scheduler) startItemSchedulers() error {
 				Timeout:               item.Timeout,
 				stopChan:              make(chan struct{}),
 				running:               false,
+				customTrigger:         customTrigger,
+				lastExecutionTime:     nil,
 			}
 
 			s.itemSchedulers[item.ItemID] = scheduler
-			s.startItemScheduler(scheduler)
-			logger.Infof("启动监控项调度器: %s", item.ItemName)
+			s.startItemSchedulerWithCustomTrigger(scheduler)
+
+			if len(item.Intervals) > 0 {
+				logger.Infof("启动监控项调度器（自定义间隔）: %s", item.ItemName)
+			} else {
+				logger.Infof("启动监控项调度器（默认间隔）: %s", item.ItemName)
+			}
 		} else {
-			logger.Warnf("监控项 %s 的间隔为0，跳过启动", item.ItemName)
+			logger.Warnf("监控项 %s 没有配置任何间隔，跳过启动", item.ItemName)
 		}
 	}
 
@@ -565,7 +578,7 @@ func (s *Scheduler) startItemSchedulers() error {
 	return nil
 }
 
-// startItemScheduler 启动单个监控项调度器
+// startItemScheduler 启动单个监控项调度器（原方法，向后兼容）
 func (s *Scheduler) startItemScheduler(itemScheduler *ItemScheduler) {
 	s.wg.Add(1)
 	go func() {
@@ -590,6 +603,83 @@ func (s *Scheduler) startItemScheduler(itemScheduler *ItemScheduler) {
 				return
 			case <-itemScheduler.ticker.C:
 				s.collectAndSendItem(itemScheduler)
+			}
+		}
+	}()
+}
+
+// startItemSchedulerWithCustomTrigger 启动带自定义触发器的监控项调度器
+func (s *Scheduler) startItemSchedulerWithCustomTrigger(itemScheduler *ItemScheduler) {
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+
+		itemScheduler.running = true
+
+		// 计算初始间隔
+		nextTime := itemScheduler.customTrigger.NextExecutionTime(nil)
+
+		// 如果没有有效的下次执行时间，退出调度器
+		if nextTime.IsZero() {
+			logger.Warnf("监控项 %s 没有有效的执行间隔，调度器退出", itemScheduler.ItemName)
+			itemScheduler.running = false
+			return
+		}
+
+		initialDuration := time.Until(nextTime)
+		if initialDuration < 0 {
+			initialDuration = 0 // 立即执行
+		}
+
+		logger.Infof("启动监控项自定义调度器: %s (ID: %d, 初始间隔: %v, 首次执行时间: %v)",
+			itemScheduler.ItemName, itemScheduler.ItemID, initialDuration, nextTime)
+
+		// 初始定时器
+		timer := time.NewTimer(initialDuration)
+		defer timer.Stop()
+
+		for {
+			select {
+			case <-s.ctx.Done():
+				itemScheduler.running = false
+				logger.Infof("监控项自定义调度器停止: %s", itemScheduler.ItemName)
+				return
+			case <-itemScheduler.stopChan:
+				itemScheduler.running = false
+				logger.Infof("监控项自定义调度器停止: %s", itemScheduler.ItemName)
+				return
+			case <-timer.C:
+				// 检查是否应该执行
+				if itemScheduler.customTrigger.ShouldExecuteNow() {
+					now := time.Now()
+					itemScheduler.lastExecutionTime = &now
+
+					logger.Infof("执行监控项采集: %s (时间: %v)", itemScheduler.ItemName, now)
+					s.collectAndSendItem(itemScheduler)
+
+					// 计算下次执行时间
+					nextTime := itemScheduler.customTrigger.NextExecutionTime(itemScheduler.lastExecutionTime)
+					if nextTime.IsZero() {
+						logger.Infof("监控项 %s 没有下次执行时间，调度器退出", itemScheduler.ItemName)
+						itemScheduler.running = false
+						return
+					}
+
+					nextInterval := time.Until(nextTime)
+					if nextInterval < 0 {
+						nextInterval = time.Second // 最小1秒间隔
+					}
+
+					logger.Debugf("监控项 %s 下次执行间隔: %v, 下次执行时间: %v",
+						itemScheduler.ItemName, nextInterval, nextTime)
+
+					// 重置定时器
+					timer.Reset(nextInterval)
+				} else {
+					// 如果不应该执行，等待一小段时间后重新检查
+					logger.Debugf("监控项 %s 当前不在执行时间范围内，等待1分钟后重新检查", itemScheduler.ItemName)
+					timer.Reset(1 * time.Minute)
+				}
 			}
 		}
 	}()
@@ -629,7 +719,7 @@ func (s *Scheduler) collectAndSendItem(itemScheduler *ItemScheduler) {
 // collectItemValue 根据ItemKey采集指标值
 func (s *Scheduler) collectItemValue(ctx context.Context, itemKey string) (interface{}, error) {
 	// 按优先级顺序处理：命令映射 > 内置键 > 硬编码（向后兼容）
-	
+
 	// 1. 首先检查命令执行采集器（最高优先级 - 用户自定义）
 	if s.commandCollector != nil && s.commandCollector.GetEnabledStatus() {
 		if s.commandCollector.HasCommand(itemKey) {
@@ -647,7 +737,7 @@ func (s *Scheduler) collectItemValue(ctx context.Context, itemKey string) (inter
 	if s.builtinKeyManager != nil {
 		if _, exists := s.builtinKeyManager.GetKey(itemKey); exists {
 			logger.Debugf("🔧 使用内置键管理器处理: %s", itemKey)
-			
+
 			// 获取系统指标
 			if s.systemCollector != nil && s.systemCollector.IsEnabled() {
 				metrics, err := s.systemCollector.Collect(ctx)
@@ -776,6 +866,12 @@ func (s *Scheduler) initAPIServices() error {
 
 	// 设置配置更新回调
 	s.configManager.SetConfigUpdateCallback(s.onConfigUpdate)
+	
+	// 设置心跳服务的引用
+	if s.heartbeatService != nil {
+		s.heartbeatService.SetRegisterService(s.registerService)
+		s.heartbeatService.SetConfigManager(s.configManager)
+	}
 
 	// 创建指标发送器
 	metricsSenderConfig := &services.MetricsSenderConfig{

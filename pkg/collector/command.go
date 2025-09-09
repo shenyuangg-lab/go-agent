@@ -157,7 +157,7 @@ func (c *CommandCollector) Collect(ctx context.Context) {
 	totalItems := len(monitorItems)
 	executedCount := 0
 	skippedCount := 0
-	
+
 	var wg sync.WaitGroup
 	for itemKey, itemID := range monitorItems {
 		// 检查是否有对应的命令配置
@@ -469,7 +469,7 @@ func (c *CommandCollector) GetCommandConfig(itemKey string) (CommandConfig, bool
 func (c *CommandCollector) GetActiveMonitorItems() map[string]int64 {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
-	
+
 	result := make(map[string]int64)
 	for k, v := range c.monitorItems {
 		result[k] = v
@@ -481,7 +481,7 @@ func (c *CommandCollector) GetActiveMonitorItems() map[string]int64 {
 func (c *CommandCollector) GetExecutableItems() map[string]int64 {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
-	
+
 	result := make(map[string]int64)
 	for itemKey, itemID := range c.monitorItems {
 		if _, exists := c.commands[itemKey]; exists {

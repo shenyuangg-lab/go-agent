@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,12 +14,13 @@ import (
 
 // CollectItem 采集项
 type CollectItem struct {
-	ItemID                int64  `json:"itemId"`
-	ItemName              string `json:"itemName"`
-	ItemKey               string `json:"itemKey"`
-	InfoType              int    `json:"infoType"`
-	UpdateIntervalSeconds int    `json:"updateIntervalSeconds"` // 推送间隔(秒)
-	Timeout               int    `json:"timeout"`
+	ItemID                int64                        `json:"itemId"`
+	ItemName              string                       `json:"itemName"`
+	ItemKey               string                       `json:"itemKey"`
+	InfoType              int                          `json:"infoType"`
+	UpdateIntervalSeconds int                          `json:"updateIntervalSeconds"` // 推送间隔(秒)
+	Timeout               int                          `json:"timeout"`
+	Intervals             []*client.ItemCustomInterval `json:"intervals"` // 自定义时间间隔
 }
 
 // ConfigManager 配置管理器
@@ -172,10 +174,23 @@ func (cm *ConfigManager) loadConfig(ctx context.Context) error {
 
 	resp, err := cm.client.GetConfig(ctx)
 	if err != nil {
+		cm.logger.Error("获取配置失败", map[string]interface{}{
+			"error": err.Error(),
+		})
 		return fmt.Errorf("获取配置失败: %v", err)
 	}
 
 	if resp.Code != 200 {
+		cm.logger.Error("获取配置响应异常", map[string]interface{}{
+			"code": resp.Code,
+			"msg":  resp.Msg,
+		})
+		
+		// 检查是否是认证相关错误
+		if cm.isAuthenticationError(resp.Code, resp.Msg) {
+			cm.logger.Warn("检测到认证错误，配置获取失败可能需要重新注册")
+		}
+		
 		return fmt.Errorf("获取配置响应异常: %s", resp.Msg)
 	}
 
@@ -189,6 +204,7 @@ func (cm *ConfigManager) loadConfig(ctx context.Context) error {
 			InfoType:              item.InfoType,
 			UpdateIntervalSeconds: item.UpdateIntervalSeconds,
 			Timeout:               item.Timeout,
+			Intervals:             item.Intervals,
 		}
 	}
 
@@ -265,4 +281,37 @@ func (cm *ConfigManager) GetItemCount() int {
 	cm.mutex.RLock()
 	defer cm.mutex.RUnlock()
 	return len(cm.items)
+}
+
+// isAuthenticationError 检查是否是认证错误
+func (cm *ConfigManager) isAuthenticationError(code int, msg string) bool {
+	// 检查HTTP状态码
+	if code == 401 || code == 403 {
+		return true
+	}
+	
+	// 检查错误消息中的关键词
+	if msg == "" {
+		return false
+	}
+	
+	authErrors := []string{
+		"unauthorized",
+		"forbidden", 
+		"token",
+		"authentication",
+		"not registered",
+		"未注册",
+		"认证失败",
+		"令牌",
+		"无权限",
+	}
+	
+	msgLower := strings.ToLower(msg)
+	for _, authErr := range authErrors {
+		if strings.Contains(msgLower, strings.ToLower(authErr)) {
+			return true
+		}
+	}
+	return false
 }

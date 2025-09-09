@@ -73,16 +73,27 @@ type MetricsResponse struct {
 	Msg  string `json:"msg"`
 }
 
+// ItemCustomInterval 自定义时间间隔
+type ItemCustomInterval struct {
+	ItemID          int64  `json:"itemId"`
+	IntervalStr     string `json:"intervalStr"`
+	IntervalSeconds int    `json:"intervalSeconds"`
+	Week            int    `json:"week"`
+	WeekStr         string `json:"weekStr"`
+	StartTime       string `json:"startTime"` // 格式: "HH:mm:ss"
+	EndTime         string `json:"endTime"`   // 格式: "HH:mm:ss"
+}
+
 // ConfigResponseData 配置响应数据项
 type ConfigResponseData struct {
-	ItemID                int64   `json:"itemId"`
-	ItemName              string  `json:"itemName"`
-	ItemKey               string  `json:"itemkey"`
-	InfoType              int     `json:"infoType"`
-	UpdateIntervalSeconds int     `json:"updateIntervalseconds"`
-	Timeout               int     `json:"timeout"`
-	Description           *string `json:"description"`
-	Intervals             *string `json:"intervals"`
+	ItemID                int64                 `json:"itemId"`
+	ItemName              string                `json:"itemName"`
+	ItemKey               string                `json:"itemkey"`
+	InfoType              int                   `json:"infoType"`
+	UpdateIntervalSeconds int                   `json:"updateIntervalseconds"`
+	Timeout               int                   `json:"timeout"`
+	Description           *string               `json:"description"`
+	Intervals             []*ItemCustomInterval `json:"intervals"`
 }
 
 // ConfigResponse 配置获取响应

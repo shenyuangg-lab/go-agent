@@ -8,15 +8,15 @@ import (
 
 // BuiltinKey 内置指标键
 type BuiltinKey struct {
-	Key         string      `json:"key"`
-	Name        string      `json:"name"`
-	Type        string      `json:"type"`
-	Category    string      `json:"category"`
-	Description string      `json:"description"`
-	ValueType   string      `json:"value_type"` // numeric, text, log
-	Units       string      `json:"units"`
-	Interval    int         `json:"interval"`   // 默认采集间隔(秒)
-	Extractor   KeyExtractor `json:"-"`         // 数据提取函数
+	Key         string       `json:"key"`
+	Name        string       `json:"name"`
+	Type        string       `json:"type"`
+	Category    string       `json:"category"`
+	Description string       `json:"description"`
+	ValueType   string       `json:"value_type"` // numeric, text, log
+	Units       string       `json:"units"`
+	Interval    int          `json:"interval"` // 默认采集间隔(秒)
+	Extractor   KeyExtractor `json:"-"`        // 数据提取函数
 }
 
 // KeyExtractor 键值提取函数
@@ -68,11 +68,11 @@ func (m *BuiltinKeyManager) ExtractValue(keyName string, metrics *SystemMetrics)
 	if !exists {
 		return nil, fmt.Errorf("未找到内置键: %s", keyName)
 	}
-	
+
 	if key.Extractor == nil {
 		return nil, fmt.Errorf("键 %s 没有提取函数", keyName)
 	}
-	
+
 	return key.Extractor(metrics), nil
 }
 
@@ -390,16 +390,16 @@ func ValidateKey(keyName string) bool {
 	if keyName == "" {
 		return false
 	}
-	
+
 	// 基本格式检查
 	if strings.Contains(keyName, " ") {
 		return false
 	}
-	
+
 	// 长度检查
 	if len(keyName) > 255 {
 		return false
 	}
-	
+
 	return true
 }

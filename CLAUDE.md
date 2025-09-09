@@ -9,7 +9,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 使用默认配置运行: `./go-agent`
 - 使用自定义配置运行: `./go-agent -c /path/to/config.yaml`
 - 详细日志运行: `./go-agent -v`
+- 后台运行（Linux/macOS）: `./go-agent -d`
+- 后台详细日志运行: `./go-agent -d -v`
 - 安装依赖: `go mod tidy`
+- 优雅关闭: `Ctrl+C` 或发送 `SIGTERM` 信号
 
 ### 开发
 - 格式化代码: `go fmt ./...`

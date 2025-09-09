@@ -87,4 +87,3 @@ func (s *RegisterService) RegisterWithRetry(ctx context.Context, maxRetries int,
 func (s *RegisterService) GetAgentID() string {
 	return s.client.GetAgentID()
 }
-
